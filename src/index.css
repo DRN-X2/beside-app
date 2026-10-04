@@ -1,0 +1,366 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  html {
+    @apply scroll-smooth;
+  }
+  
+  body {
+    background-color: #F1F1F1;
+    @apply font-sans text-[#4C271A] antialiased;
+    overscroll-behavior: none;
+  }
+
+  /* Mobile app feel */
+  #root {
+    @apply min-h-screen max-w-md mx-auto relative;
+    background-color: #F1F1F1;
+  }
+}
+
+@layer components {
+  /* Buttons */
+  .btn-primary {
+    @apply bg-beside-primary text-cream font-semibold py-3 px-6 rounded-2xl 
+           shadow-warm transition-all duration-200 active:scale-95 
+           hover:bg-chestnut-light disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-secondary {
+    @apply bg-caramel text-white font-semibold py-3 px-6 rounded-2xl
+           shadow-warm transition-all duration-200 active:scale-95
+           hover:bg-caramel-light;
+  }
+
+  .btn-outline {
+    @apply border-2 border-beside-primary text-beside-primary font-semibold py-3 px-6 rounded-2xl
+           transition-all duration-200 active:scale-95 hover:bg-beside-primary hover:text-cream;
+  }
+  
+  .btn-ghost {
+    @apply text-beside-primary font-medium py-2 px-4 rounded-xl
+           transition-all duration-200 active:scale-95 hover:bg-cocoa-100;
+  }
+
+  /* Cards */
+  .card {
+    @apply bg-white rounded-3xl shadow-card p-4;
+  }
+  
+  .card-warm {
+    @apply bg-cream rounded-3xl shadow-card p-4 border border-tan-light;
+  }
+
+  /* Inputs */
+  .input-base {
+    @apply w-full bg-cream border border-tan rounded-xl px-4 py-3
+           text-beside-text placeholder-beside-muted 
+           focus:outline-none focus:border-beside-secondary focus:ring-2 focus:ring-caramel/20
+           transition-all duration-200;
+  }
+
+  /* Nav */
+  .nav-item {
+    @apply flex flex-col items-center gap-1 py-2 px-3 rounded-xl
+           text-beside-muted transition-all duration-200;
+  }
+  
+  .nav-item.active {
+    @apply text-beside-primary;
+  }
+
+  /* Compatibility badge */
+  .compat-badge {
+    @apply inline-flex items-center gap-1 bg-green-50 text-green-700 
+           text-sm font-semibold px-3 py-1 rounded-full border border-green-200;
+  }
+
+  /* Status dots */
+  .status-online  { @apply w-2.5 h-2.5 rounded-full bg-green-500; }
+  .status-looking { @apply w-2.5 h-2.5 rounded-full bg-orange-400; }
+  .status-away    { @apply w-2.5 h-2.5 rounded-full bg-blue-400; }
+  .status-offline { @apply w-2.5 h-2.5 rounded-full bg-gray-300; }
+
+  /* Page wrapper */
+  .page {
+    @apply min-h-screen pb-24 animate-fade-in;
+  }
+  
+  .page-header {
+    @apply sticky top-0 z-20 bg-cream/95 backdrop-blur-sm 
+           border-b border-tan-light px-4 py-3;
+  }
+
+  /* Relationship badge */
+  .rel-badge {
+    @apply text-xs font-semibold px-2.5 py-1 rounded-full;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    background: linear-gradient(135deg, #6B3410, #C68642);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  .bg-warm-gradient {
+    background: linear-gradient(135deg, #6B3410 0%, #C68642 100%);
+  }
+  
+  .bg-card-gradient {
+    background: linear-gradient(180deg, #FFFFFF 0%, #FDF6EC 100%);
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 1rem);
+  }
+
+  /* ========================================================
+     60-30-10 COLOR RULE & TASTEFUL NEUMORPHISM
+     60 - Dominant White: #F1F1F1 (Canvas & Surfaces)
+     30 - Secondary Brown: #7E4228 (Brand, Hero, Actions)
+     10 - Accent Dark Brown: #4C271A (Headings, Depth, Contrast)
+     Subtle, tasteful dual-light physics (NO glowing halos)
+     ======================================================== */
+  :root {
+    --neu-bg: #F1F1F1;
+    --neu-surface: #F1F1F1;
+    --neu-light: rgba(255, 255, 255, 0.85);
+    --neu-shadow: rgba(76, 39, 26, 0.08);
+    --neu-shadow-deep: rgba(76, 39, 26, 0.14);
+    --color-dominant: #F1F1F1;
+    --color-secondary: #7E4228;
+    --color-accent: #4C271A;
+  }
+
+  /* Raised Neumorphic Cards (Tasteful, soft depth) */
+  .neu-card,
+  .clay-card {
+    background: #F1F1F1;
+    border-radius: 20px;
+    box-shadow: 
+      5px 5px 14px var(--neu-shadow),
+      -5px -5px 14px var(--neu-light);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+  }
+
+  .neu-card-floating,
+  .clay-card-floating {
+    background: #F1F1F1;
+    border-radius: 22px;
+    box-shadow: 
+      6px 6px 16px var(--neu-shadow),
+      -6px -6px 16px var(--neu-light);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+  }
+
+  /* Dark Neumorphic Tile (HUDs, GitHub Streak Heatmap) */
+  .neu-tile-dark,
+  .clay-tile-dark {
+    background: #4C271A;
+    border-radius: 20px;
+    box-shadow: 
+      0 10px 24px -4px rgba(76, 39, 26, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  /* Neumorphic Navigation Dock */
+  .neu-dock,
+  .clay-dock {
+    background: #E8E8E8;
+    border-radius: 28px;
+    box-shadow: 
+      inset 3px 3px 7px rgba(76, 39, 26, 0.1),
+      inset -3px -3px 7px rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+  }
+
+  /* Inset / Debossed Wells (Inputs, Progress Tracks, Recessed Wells) */
+  .neu-inset,
+  .clay-inset {
+    background: #E8E8E8;
+    border-radius: 14px;
+    box-shadow: 
+      inset 2.5px 2.5px 5px rgba(76, 39, 26, 0.09),
+      inset -2.5px -2.5px 5px rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(0, 0, 0, 0.02);
+  }
+
+  /* Neumorphic Tactile Pill */
+  .neu-pill,
+  .clay-pill {
+    border-radius: 9999px;
+    background: #F1F1F1;
+    box-shadow: 
+      2.5px 2.5px 6px var(--neu-shadow),
+      -2.5px -2.5px 6px var(--neu-light);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+  }
+
+  /* Tactile Interactive Buttons */
+  .neu-btn,
+  .clay-btn {
+    border-radius: 16px;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    cursor: pointer;
+  }
+
+  /* Raised Default Button */
+  .neu-btn-raised {
+    background: #F1F1F1;
+    color: #4C271A;
+    box-shadow: 
+      4px 4px 10px var(--neu-shadow),
+      -4px -4px 10px var(--neu-light);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+  }
+  .neu-btn-raised:active {
+    box-shadow: 
+      inset 2px 2px 5px rgba(76, 39, 26, 0.12),
+      inset -2px -2px 5px rgba(255, 255, 255, 0.8);
+    transform: translateY(1px);
+  }
+
+  /* 30% Secondary Brown Button (#7E4228) - NO white glow */
+  .neu-btn-primary,
+  .clay-btn-primary,
+  .clay-btn-amber {
+    background: #7E4228;
+    color: #FFFFFF;
+    box-shadow: 
+      0 4px 12px rgba(76, 39, 26, 0.24);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+  }
+  .neu-btn-primary:hover,
+  .clay-btn-primary:hover,
+  .clay-btn-amber:hover {
+    background: #6E3821;
+  }
+  .neu-btn-primary:active,
+  .clay-btn-primary:active,
+  .clay-btn-amber:active {
+    background: #5D2E1B;
+    box-shadow: 
+      inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    transform: translateY(1px);
+  }
+
+  /* Secondary Lighter Brown Pill Button */
+  .neu-btn-brown-light {
+    background: #EFE7E2;
+    color: #4C271A;
+    box-shadow: 
+      3px 3px 7px var(--neu-shadow),
+      -3px -3px 7px var(--neu-light);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+  }
+  .neu-btn-brown-light:active {
+    box-shadow: 
+      inset 2px 2px 4px rgba(76, 39, 26, 0.12),
+      inset -2px -2px 4px rgba(255, 255, 255, 0.8);
+  }
+
+  /* Red Danger / Logout Button */
+  .neu-btn-red,
+  .clay-btn-red {
+    background: #DC2626;
+    color: #FFFFFF;
+    box-shadow: 
+      0 4px 12px rgba(220, 38, 38, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+  }
+  .neu-btn-red:hover,
+  .clay-btn-red:hover {
+    background: #B91C1C;
+  }
+  .neu-btn-red:active,
+  .clay-btn-red:active {
+    background: #991B1B;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    transform: translateY(1px);
+  }
+
+  /* Emerald / Verified Functional Button */
+  .neu-btn-green,
+  .clay-btn-green {
+    background: #15803D;
+    color: #FFFFFF;
+    box-shadow: 
+      0 4px 12px rgba(21, 128, 61, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+  }
+  .neu-btn-green:active,
+  .clay-btn-green:active {
+    background: #166534;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    transform: translateY(1px);
+  }
+
+  /* Circular Neumorphic Icon Button (Light Surface) */
+  .neu-btn-circle-light,
+  .clay-btn-circle-light {
+    background: #F1F1F1;
+    color: #4C271A;
+    box-shadow: 
+      3.5px 3.5px 9px var(--neu-shadow),
+      -3.5px -3.5px 9px var(--neu-light);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+  }
+  .neu-btn-circle-light:active,
+  .clay-btn-circle-light:active {
+    box-shadow: 
+      inset 2px 2px 4px rgba(76, 39, 26, 0.12),
+      inset -2px -2px 4px var(--neu-light);
+    transform: scale(0.97);
+  }
+
+  /* Circular Neumorphic Icon Button (Dark Brown Surface) */
+  .neu-btn-circle-dark,
+  .clay-btn-circle-dark {
+    background: #4C271A;
+    color: #F1F1F1;
+    box-shadow: 
+      0 4px 10px rgba(76, 39, 26, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .neu-btn-circle-dark:active,
+  .clay-btn-circle-dark:active {
+    background: #3B1E13;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+    transform: scale(0.97);
+  }
+}
+
+/* Scrollbar hide */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Swipe card animations */
+@keyframes swipe-left {
+  to { transform: translateX(-150%) rotate(-20deg); opacity: 0; }
+}
+@keyframes swipe-right {
+  to { transform: translateX(150%) rotate(20deg); opacity: 0; }
+}
+.swipe-left  { animation: swipe-left 0.4s ease-out forwards; }
+.swipe-right { animation: swipe-right 0.4s ease-out forwards; }
+
+/* Match pulse */
+@keyframes match-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(198, 134, 66, 0.6); }
+  70%  { box-shadow: 0 0 0 20px rgba(198, 134, 66, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(198, 134, 66, 0); }
+}
+.match-pulse { animation: match-pulse 1.5s ease-out; }

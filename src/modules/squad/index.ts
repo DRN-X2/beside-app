@@ -1,0 +1,1 @@
+export { SquadLobbyPage } from './SquadLobbyPage'

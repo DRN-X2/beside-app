@@ -1,0 +1,7 @@
+export { DuoDiscoveryPage } from './DuoDiscoveryPage'
+export { DuoPage } from './DuoPage'
+export * from './components/DuoSwipeCard'
+export * from './components/DuoMatchModal'
+export * from './components/DuoVideoRoom'
+export * from './components/DraggableObjectivesCard'
+export * from './components/DuoInCallSharedSpace'
