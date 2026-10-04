@@ -17,14 +17,33 @@ export const DEFAULT_OTTER: OtterConfig = {
 export function normalizeProfile(raw: any): DemoUser | null {
   if (!raw) return null
 
+  const config = (typeof raw.otter_config === 'object' && raw.otter_config !== null)
+    ? raw.otter_config
+    : (typeof raw.otter === 'object' && raw.otter !== null ? raw.otter : {})
+
   const resolvedOtter: OtterConfig = {
-    fur: raw.otter?.fur || raw.otter_config?.fur || 'brown',
-    eyes: raw.otter?.eyes || raw.otter_config?.eyes || 'happy',
-    glasses: raw.otter?.glasses || raw.otter_config?.glasses || 'none',
-    clothing: raw.otter?.clothing || raw.otter_config?.clothing || 'hoodie',
-    accessory: raw.otter?.accessory || raw.otter_config?.accessory || 'none',
-    background: raw.otter?.background || raw.otter_config?.background || 'cream',
+    fur: config.fur || 'brown',
+    eyes: config.eyes || 'happy',
+    glasses: config.glasses || 'none',
+    clothing: config.clothing || 'hoodie',
+    accessory: config.accessory || 'none',
+    background: config.background || 'cream',
   }
+
+  const rawInterests = Array.isArray(raw.interests) && raw.interests.length > 0
+    ? raw.interests
+    : (Array.isArray(raw.learning_interests) && raw.learning_interests.length > 0
+      ? raw.learning_interests
+      : (Array.isArray(config.learning_interests) ? config.learning_interests : []))
+
+  const rawSkills = Array.isArray(raw.skills) && raw.skills.length > 0
+    ? raw.skills
+    : (Array.isArray(config.skills) ? config.skills : [])
+
+  const isOnboardingDone =
+    Boolean(raw.onboarding_completed) ||
+    Boolean(config.onboarding_completed) ||
+    (rawInterests.length >= 3 && rawSkills.length >= 1)
 
   return {
     id: raw.id || `user-${Date.now()}`,
@@ -32,37 +51,33 @@ export function normalizeProfile(raw: any): DemoUser | null {
     email: raw.email || '',
     display_name: raw.display_name || raw.username || 'Study Buddy',
     username: raw.username || raw.display_name || 'student',
-    education_status: raw.education_status || 'College',
-    degree_program: raw.degree_program || 'Student',
-    degree_code: raw.degree_code || 'STU',
-    year_level: raw.year_level || '1st Year',
-    school: raw.school || 'University',
-    subjects: Array.isArray(raw.subjects) ? raw.subjects : [],
-    learning_interests: Array.isArray(raw.learning_interests)
-      ? raw.learning_interests
-      : Array.isArray(raw.interests)
-      ? raw.interests
-      : [],
-    skills: Array.isArray(raw.skills) ? raw.skills : [],
-    study_style: raw.study_style || 'mixed',
-    preferred_duration: raw.preferred_duration === 50 ? 30 : (raw.preferred_duration || 30),
-    availability: Array.isArray(raw.availability) ? raw.availability : [],
-    accountability_pref: raw.accountability_pref || 'gentle',
-    camera_pref: raw.camera_pref ?? true,
-    mic_pref: raw.mic_pref ?? true,
-    country: raw.country || 'Philippines',
-    country_code: raw.country_code || 'PH',
-    city: raw.city || 'Manila',
+    education_status: raw.education_status || raw.category || config.education_status || 'College',
+    degree_program: raw.degree_program || config.degree_program || 'BS Information Technology',
+    degree_code: raw.degree_code || config.degree_code || 'BSIT',
+    year_level: raw.year_level || config.year_level || '3rd Year',
+    school: raw.school || config.school || 'MSU-IIT',
+    subjects: rawInterests,
+    learning_interests: rawInterests,
+    skills: rawSkills,
+    study_style: raw.study_style || config.study_style || 'mixed',
+    preferred_duration: raw.preferred_duration === 50 ? 30 : (raw.preferred_duration || config.preferred_duration || 30),
+    availability: Array.isArray(raw.availability) ? raw.availability : (config.availability || []),
+    accountability_pref: raw.accountability_pref || config.accountability_pref || 'gentle',
+    camera_pref: raw.camera_pref ?? config.camera_pref ?? true,
+    mic_pref: raw.mic_pref ?? config.mic_pref ?? true,
+    country: raw.country || config.country || 'Philippines',
+    country_code: raw.country_code || config.country_code || 'PH',
+    city: raw.city || config.city || 'Manila',
     online_status: raw.online_status || 'online',
-    xp: typeof raw.xp === 'number' ? raw.xp : 0,
-    streak: typeof raw.streak === 'number' ? raw.streak : 0,
-    onboarding_completed: raw.onboarding_completed !== undefined
-      ? Boolean(raw.onboarding_completed)
-      : (Array.isArray(raw.learning_interests) && raw.learning_interests.length >= 3 && Array.isArray(raw.skills) && raw.skills.length >= 1),
+    xp: typeof raw.xp === 'number' ? raw.xp : (config.xp || 0),
+    streak: typeof raw.streak === 'number' ? raw.streak : (config.streak || 0),
+    onboarding_completed: isOnboardingDone,
     created_at: raw.created_at || new Date().toISOString(),
     updated_at: raw.updated_at || new Date().toISOString(),
     otter: resolvedOtter,
-    // Add otter_config as alias for backwards compatibility
-    ...({ otter_config: resolvedOtter }),
+    otter_config: {
+      ...resolvedOtter,
+      ...config,
+    },
   } as DemoUser
 }

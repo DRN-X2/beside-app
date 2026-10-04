@@ -21,14 +21,16 @@ import { useSessionStore } from './store/sessionStore'
 import OnboardingPage from './pages/OnboardingPage'
 
 function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const { user, isDemo, profile } = useAuthStore()
+  const { user, isDemo, profile, isNewSignUp } = useAuthStore()
   const { isActive, isSquadActive } = useSessionStore()
   const location = useLocation()
 
   if (!user && !isDemo) return <Navigate to="/auth" replace />
 
-  // If user has profile but hasn't completed onboarding, direct them to /onboarding
-  if (profile && !profile.onboarding_completed && location.pathname !== '/onboarding') {
+  // ONLY redirect to /onboarding if this was a fresh account creation (isNewSignUp === true)
+  // and onboarding has not been completed.
+  // Regular sign-ins and Demo Mode will NEVER be forced into onboarding.
+  if (!isDemo && isNewSignUp && profile && !profile.onboarding_completed && location.pathname !== '/onboarding') {
     return <Navigate to="/onboarding" replace />
   }
 

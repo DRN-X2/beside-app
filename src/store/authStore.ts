@@ -11,11 +11,13 @@ interface AuthState {
   profile: DemoUser | null
   isLoading: boolean
   isDemo: boolean
+  isNewSignUp: boolean
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   signUp: (email: string, password: string, name: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
   setProfile: (profile: DemoUser | any) => void
   enterDemoMode: () => void
+  setIsNewSignUp: (val: boolean) => void
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -25,10 +27,16 @@ export const useAuthStore = create<AuthState>()(
       profile: null,
       isLoading: false,
       isDemo: false,
+      isNewSignUp: false,
 
       signIn: async (email, password) => {
         if (isDemoMode()) {
-          set({ isDemo: true, profile: DEMO_CURRENT_USER, user: { id: DEMO_CURRENT_USER.id, email: DEMO_CURRENT_USER.email } })
+          set({
+            isDemo: true,
+            isNewSignUp: false,
+            profile: { ...DEMO_CURRENT_USER, onboarding_completed: true },
+            user: { id: DEMO_CURRENT_USER.id, email: DEMO_CURRENT_USER.email },
+          })
           return { error: null }
         }
         set({ isLoading: true })
@@ -45,7 +53,12 @@ export const useAuthStore = create<AuthState>()(
           .eq('id', data.user.id)
           .single()
 
-        set({ isLoading: false, user: data.user, profile: normalizeProfile(profileData) })
+        set({
+          isLoading: false,
+          user: data.user,
+          profile: normalizeProfile(profileData),
+          isNewSignUp: false,
+        })
         return { error: profileError ? profileError.message : null }
       },
 
@@ -56,8 +69,9 @@ export const useAuthStore = create<AuthState>()(
             email,
             display_name: name,
             id: `demo-${Date.now()}`,
+            onboarding_completed: false,
           }
-          set({ isDemo: true, profile: newUser, user: { id: newUser.id, email } })
+          set({ isDemo: true, isNewSignUp: true, profile: newUser, user: { id: newUser.id, email } })
           return { error: null }
         }
         set({ isLoading: true })
@@ -77,7 +91,12 @@ export const useAuthStore = create<AuthState>()(
           profileData = pData
         }
 
-        set({ isLoading: false, user: data.user, profile: normalizeProfile(profileData) })
+        set({
+          isLoading: false,
+          user: data.user,
+          profile: normalizeProfile(profileData),
+          isNewSignUp: true,
+        })
         useConnectionStore.getState().clearConnections()
         return { error: null }
       },
@@ -85,15 +104,22 @@ export const useAuthStore = create<AuthState>()(
       signOut: async () => {
         if (!isDemoMode()) await supabase.auth.signOut()
         useConnectionStore.getState().clearConnections()
-        set({ user: null, profile: null, isDemo: false })
+        set({ user: null, profile: null, isDemo: false, isNewSignUp: false })
       },
 
       setProfile: (profile) => set({ profile: normalizeProfile(profile) }),
 
       enterDemoMode: () => {
         useConnectionStore.getState().loadDemoConnections()
-        set({ isDemo: true, profile: DEMO_CURRENT_USER, user: { id: DEMO_CURRENT_USER.id, email: DEMO_CURRENT_USER.email } })
+        set({
+          isDemo: true,
+          isNewSignUp: false,
+          profile: { ...DEMO_CURRENT_USER, onboarding_completed: true },
+          user: { id: DEMO_CURRENT_USER.id, email: DEMO_CURRENT_USER.email },
+        })
       },
+
+      setIsNewSignUp: (val) => set({ isNewSignUp: val }),
     }),
     {
       name: 'beside-auth',

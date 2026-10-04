@@ -205,6 +205,7 @@ export const DEMO_CURRENT_USER: DemoUser = {
   xp: 1450,
   created_at: '2026-01-01T08:00:00Z',
   updated_at: '2026-03-01T12:00:00Z',
+  onboarding_completed: true,
   otter: {
     fur: 'brown',
     eyes: 'happy',

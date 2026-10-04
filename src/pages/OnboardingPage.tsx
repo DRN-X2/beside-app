@@ -512,6 +512,20 @@ export default function OnboardingPage() {
       ? words.map((w) => w[0]?.toUpperCase()).join('').slice(0, 5)
       : degreeProgram.slice(0, 4).toUpperCase()
 
+    const fullOtterConfig = {
+      ...otter,
+      onboarding_completed: true,
+      school: school.trim(),
+      degree_program: degreeProgram.trim(),
+      degree_code: degreeCode,
+      year_level: yearLevel,
+      education_status: educationStatus,
+      study_style: studyStyle,
+      preferred_duration: duration,
+      accountability_pref: accountability,
+      learning_interests: interests,
+    }
+
     const updatedProfile = {
       ...(profile || {}),
       education_status: educationStatus,
@@ -526,34 +540,28 @@ export default function OnboardingPage() {
       subjects: interests,
       skills: skills,
       otter: otter,
-      otter_config: otter,
+      otter_config: fullOtterConfig,
       onboarding_completed: true,
-      xp: (profile?.xp || 100) + 100, // +100 XP Onboarding bonus!
+      xp: (profile?.xp || 0) + 100, // +100 XP Onboarding bonus!
     }
 
     setProfile(updatedProfile)
+    useAuthStore.setState({ isNewSignUp: false })
 
-    // Persist directly to Supabase if not demo
+    // Persist directly to Supabase using only the columns that actually exist in the schema
     if (!isDemo && profile?.id && !profile.id.startsWith('demo-')) {
       await (supabase.from('profiles') as any).update({
-        education_status: educationStatus,
-        school: school.trim(),
-        degree_program: degreeProgram.trim(),
-        degree_code: degreeCode,
-        year_level: yearLevel,
-        study_style: studyStyle,
-        preferred_duration: duration,
-        accountability_pref: accountability,
-        learning_interests: interests,
+        interests: interests,
         skills: skills,
-        otter_config: otter,
-        onboarding_completed: true,
+        category: educationStatus,
+        course_grade: `${yearLevel} - ${degreeProgram}${school ? ` (${school})` : ''}`,
+        otter_config: fullOtterConfig,
         xp: updatedProfile.xp,
       }).eq('id', profile.id)
     }
 
     setIsSubmitting(false)
-    navigate('/discover', { replace: true })
+    navigate('/', { replace: true })
   }
 
   return (
