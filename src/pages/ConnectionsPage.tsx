@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react'
 import { ArrowLeft, Check, X, Users, Heart, Bell, ExternalLink } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import OtterAvatar from '../components/OtterAvatar'
-import { LearnerProfileModal } from '../components/LearnerProfileModal'
 import { ConfirmationModal } from '../components/ConfirmationModal'
 import { useConnectionStore } from '../store/connectionStore'
 import { useAuthStore } from '../store/authStore'
@@ -16,8 +15,6 @@ export default function ConnectionsPage() {
   const { notifications, togglePanel } = useNotificationStore()
   const navigate = useNavigate()
 
-  const [visitedUser, setVisitedUser] = useState<DemoUser | null>(null)
-  const [showProfileModal, setShowProfileModal] = useState(false)
   const [pendingDeclineId, setPendingDeclineId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -73,20 +70,14 @@ export default function ConnectionsPage() {
             {pendingReceived.map((conn) => (
               <div key={conn.user.id} className="neu-card p-4 flex items-center gap-3">
                 <div
-                  onClick={() => {
-                    setVisitedUser(conn.user)
-                    setShowProfileModal(true)
-                  }}
+                  onClick={() => navigate(`/profile/${conn.user.id}`, { state: { viewUser: conn.user } })}
                   className="cursor-pointer"
                 >
                   <OtterAvatar config={conn.user.otter} size="sm" />
                 </div>
                 <div
                   className="flex-1 min-w-0 cursor-pointer"
-                  onClick={() => {
-                    setVisitedUser(conn.user)
-                    setShowProfileModal(true)
-                  }}
+                  onClick={() => navigate(`/profile/${conn.user.id}`, { state: { viewUser: conn.user } })}
                 >
                   <p className="font-bold text-sm text-[#4C271A] truncate">{conn.user.display_name}</p>
                   <p className="text-xs text-[#7E4228] font-semibold">{conn.compatibility.score}% compatible</p>
@@ -126,20 +117,14 @@ export default function ConnectionsPage() {
               return (
                 <div key={conn.user.id} className="neu-card p-4 flex items-center gap-3">
                   <div
-                    onClick={() => {
-                      setVisitedUser(conn.user)
-                      setShowProfileModal(true)
-                    }}
+                    onClick={() => navigate(`/profile/${conn.user.id}`, { state: { viewUser: conn.user } })}
                     className="cursor-pointer"
                   >
                     <OtterAvatar config={conn.user.otter} size="md" />
                   </div>
                   <div
                     className="flex-1 min-w-0 cursor-pointer"
-                    onClick={() => {
-                      setVisitedUser(conn.user)
-                      setShowProfileModal(true)
-                    }}
+                    onClick={() => navigate(`/profile/${conn.user.id}`, { state: { viewUser: conn.user } })}
                   >
                     <p className="font-black text-sm text-[#4C271A] truncate">{conn.user.display_name}</p>
                     <p className="text-xs text-[#7E4228] truncate">{conn.user.degree_program}</p>
@@ -154,10 +139,7 @@ export default function ConnectionsPage() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button
-                      onClick={() => {
-                        setVisitedUser(conn.user)
-                        setShowProfileModal(true)
-                      }}
+                      onClick={() => navigate(`/profile/${conn.user.id}`, { state: { viewUser: conn.user } })}
                       className="px-2.5 py-2 rounded-xl bg-[#FAF2E6] hover:bg-[#E5DFD9] text-[#7E4228] text-xs font-bold border border-[#7E4228]/20 transition-all cursor-pointer"
                       title="Visit Profile"
                     >
@@ -218,16 +200,6 @@ export default function ConnectionsPage() {
             Find Study Buddies
           </button>
         </div>
-      )}
-
-      {/* Visited Learner Profile Modal */}
-      {showProfileModal && (
-        <LearnerProfileModal
-          user={visitedUser}
-          isOpen={showProfileModal}
-          onClose={() => setShowProfileModal(false)}
-          onOpenAnotherProfile={(newUser) => setVisitedUser(newUser)}
-        />
       )}
 
       {/* Decline Request Confirmation Modal */}

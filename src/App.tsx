@@ -180,6 +180,9 @@ export default function App() {
           <Route path="/profile" element={
             <ProtectedLayout><ProfilePage /></ProtectedLayout>
           } />
+          <Route path="/profile/:userId" element={
+            <ProtectedLayout><ProfilePage /></ProtectedLayout>
+          } />
           <Route path="/onboarding" element={
             <ProtectedLayout><OnboardingPage /></ProtectedLayout>
           } />

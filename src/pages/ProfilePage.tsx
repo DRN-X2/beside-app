@@ -18,14 +18,19 @@ import {
   EyeOff,
   Globe,
   Lock,
+  Video,
+  UserPlus,
+  AlertCircle,
+  ExternalLink,
 } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import OtterAvatar from '../components/OtterAvatar'
 import { CountryFlag } from '../shared/components/CountryFlag'
 import { ConfirmationModal } from '../components/ConfirmationModal'
 import { useAuthStore } from '../store/authStore'
-import { useConnectionStore } from '../store/connectionStore'
+import { useConnectionStore, hasCompletedSessionWith } from '../store/connectionStore'
 import { supabase } from '../lib/supabase'
+import { normalizeProfile } from '../utils/profileNormalizer'
 import { fetchUserDashboardStats, type UserDashboardStats } from '../services/xpService'
 import type {
   OtterFur,
@@ -102,10 +107,595 @@ const LABELS: Record<string, string> = {
   cream: 'Cream', sky: 'Sky', forest: 'Forest', library: 'Library', night: 'Night', sunset: 'Sunset',
 }
 
+function VisitorProfileView({
+  targetUserId,
+  initialUser,
+}: {
+  targetUserId: string
+  initialUser?: any
+}) {
+  const navigate = useNavigate()
+  const { profile: currentUser } = useAuthStore()
+  const { connections, sendRequestDB } = useConnectionStore()
+
+  const [targetProfile, setTargetProfile] = useState<any>(initialUser || null)
+  const [loading, setLoading] = useState(!initialUser)
+  const [stats, setStats] = useState<UserDashboardStats | null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const [requestSent, setRequestSent] = useState(false)
+
+  // Public connections list state
+  const [otherConnections, setOtherConnections] = useState<any[]>([])
+  const [showConnectionsModal, setShowConnectionsModal] = useState(false)
+  const [loadingConnections, setLoadingConnections] = useState(false)
+  const [privateAlert, setPrivateAlert] = useState(false)
+
+  useEffect(() => {
+    let isMounted = true
+    const loadTarget = async () => {
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', targetUserId)
+          .single()
+
+        if (data && isMounted) {
+          setTargetProfile(normalizeProfile(data))
+        }
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (isMounted) setLoading(false)
+      }
+    }
+
+    loadTarget()
+    fetchUserDashboardStats(targetUserId).then((res) => {
+      if (isMounted) setStats(res)
+    })
+
+    return () => {
+      isMounted = false
+    }
+  }, [targetUserId])
+
+  const isConnected = connections[targetUserId]?.status === 'accepted'
+  const isPending = connections[targetUserId]?.status === 'pending_sent' || requestSent
+  const hasHadSession = hasCompletedSessionWith(targetUserId)
+  const isBusyOrOffline = ['studying', 'looking', 'offline'].includes(targetProfile?.online_status || '')
+
+  const isConnectionsPrivate = Boolean(
+    targetProfile?.connections_private ||
+    targetProfile?.otter_config?.connections_private
+  )
+
+  const handleOpenConnections = async () => {
+    if (isConnectionsPrivate) {
+      setPrivateAlert(true)
+      return
+    }
+    setShowConnectionsModal(true)
+    if (otherConnections.length === 0) {
+      setLoadingConnections(true)
+      try {
+        const { data } = await supabase
+          .from('connections')
+          .select(`
+            requester_id,
+            recipient_id,
+            status,
+            requester:profiles!requester_id(*),
+            recipient:profiles!recipient_id(*)
+          `)
+          .or(`requester_id.eq.${targetUserId},recipient_id.eq.${targetUserId}`)
+          .eq('status', 'accepted')
+
+        const peers: any[] = []
+        if (data) {
+          for (const row of data as any[]) {
+            const isRequester = row.requester_id === targetUserId
+            const peerRaw = isRequester ? row.recipient : row.requester
+            if (!peerRaw) continue
+            const peer = normalizeProfile(peerRaw)
+            if (peer && peer.id !== targetUserId) {
+              peers.push(peer)
+            }
+          }
+        }
+        setOtherConnections(peers)
+      } catch (err) {
+        console.error(err)
+      } finally {
+        setLoadingConnections(false)
+      }
+    }
+  }
+
+  const handleConnect = async () => {
+    if (!currentUser?.id || isConnected || isPending || !targetProfile) return
+    setConnecting(true)
+    try {
+      await sendRequestDB(targetProfile)
+      setRequestSent(true)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  const handleStudy = () => {
+    if (isBusyOrOffline || !targetProfile) return
+    navigate('/duo', { state: { partner: targetProfile, initiated: true } })
+  }
+
+  // Calculate streak activity
+  const userStreak = stats ? stats.streakDays : (targetProfile?.streak ?? 0)
+  const streakGrid = useMemo(() => {
+    const weeks: { date: string; count: number; dayOfWeek: number }[][] = []
+    const today = new Date()
+    const numWeeks = 24
+    const sessionsByDate: Record<string, number> = {}
+    if (stats?.sessionDates) {
+      for (const d of stats.sessionDates) {
+        sessionsByDate[d] = (sessionsByDate[d] || 0) + 1
+      }
+    }
+    for (let w = numWeeks - 1; w >= 0; w--) {
+      const weekDays: { date: string; count: number; dayOfWeek: number }[] = []
+      for (let d = 0; d < 7; d++) {
+        const dateObj = new Date(today)
+        dateObj.setDate(today.getDate() - (w * 7 + (6 - d)))
+        const dateStr = dateObj.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        })
+        const isoDate = dateObj.toISOString().slice(0, 10)
+        const count = sessionsByDate[isoDate] || 0
+        weekDays.push({ date: dateStr, count, dayOfWeek: d })
+      }
+      weeks.push(weekDays)
+    }
+    return weeks
+  }, [stats])
+
+  if (loading) {
+    return (
+      <div className="min-h-[100dvh] bg-[#F1F1F1] flex items-center justify-center text-[#4C271A]">
+        <div className="w-8 h-8 rounded-full border-3 border-[#7E4228] border-t-transparent animate-spin" />
+      </div>
+    )
+  }
+
+  if (!targetProfile) {
+    return (
+      <div className="min-h-[100dvh] bg-[#F1F1F1] flex flex-col items-center justify-center p-6 text-center text-[#4C271A]">
+        <h2 className="font-display font-black text-xl mb-2">Learner Profile Not Found</h2>
+        <p className="text-xs text-[#7E4228] mb-4">This user profile may have been removed or is unavailable.</p>
+        <button
+          onClick={() => navigate(-1)}
+          className="px-6 py-3 neu-btn-primary rounded-2xl text-xs font-black text-white"
+        >
+          Go Back
+        </button>
+      </div>
+    )
+  }
+
+  const targetOtter = targetProfile.otter_config || targetProfile.otter || {
+    fur: 'brown',
+    eyes: 'happy',
+    glasses: 'none',
+    clothing: 'hoodie',
+    accessory: 'none',
+    background: 'cream',
+  }
+
+  return (
+    <div className="relative w-full min-h-[100dvh] bg-[#F1F1F1] flex flex-col justify-between p-4 max-w-md mx-auto select-none text-[#4C271A] pb-32">
+      <div>
+        {/* Top Header: Back button + Title, NO settings, NO edit button */}
+        <div className="flex items-center justify-between pt-2 mb-4">
+          <button
+            onClick={() => navigate(-1)}
+            className="w-10 h-10 rounded-2xl neu-btn-circle-light flex items-center justify-center text-[#4C271A] cursor-pointer"
+          >
+            <ArrowLeft className="w-5 h-5 stroke-[2.5]" />
+          </button>
+          <h1 className="font-display font-black text-2xl text-[#4C271A]">
+            Profile
+          </h1>
+          <div className="w-10 h-10" />
+        </div>
+
+        <div className="space-y-4">
+          {/* Profile Header Card (Image 5 style) */}
+          <div className="neu-card-floating p-4 relative overflow-hidden">
+            {/* Warm Secondary Brown Top Banner */}
+            <div className="absolute top-0 left-0 right-0 h-16 bg-[#7E4228] border-b border-[#4C271A]/20" />
+
+            <div className="relative pt-6 flex items-end justify-between gap-3">
+              {/* Otter Avatar with Dark Brown Circle Background & Flag Pin (NO edit button) */}
+              <div className="relative drop-shadow-md">
+                <div className="w-20 h-20 rounded-full bg-[#4C271A] p-1 border-2 border-white shadow-sm flex items-center justify-center overflow-hidden">
+                  <OtterAvatar config={targetOtter} size="lg" />
+                </div>
+                {targetProfile.country_code && (
+                  <div className="absolute -bottom-1 -right-1 z-10 rounded-full ring-2 ring-white drop-shadow-sm">
+                    <CountryFlag countryCode={targetProfile.country_code} size="xs" />
+                  </div>
+                )}
+              </div>
+
+              {/* Connections Counter Button */}
+              <div className="flex flex-col items-end pb-1">
+                <button
+                  onClick={handleOpenConnections}
+                  className="neu-pill bg-[#EFE7E2] text-[#7E4228] px-3 py-1.5 text-[11px] font-black border border-[#7E4228]/20 flex items-center gap-1.5 active:scale-95 transition-all hover:bg-[#E5DFD9] cursor-pointer"
+                >
+                  {isConnectionsPrivate ? (
+                    <>
+                      <Lock className="w-3.5 h-3.5 stroke-[2.5]" />
+                      <span>Private connections</span>
+                    </>
+                  ) : (
+                    <>
+                      <Users className="w-3.5 h-3.5 stroke-[2.5]" />
+                      <span>
+                        {otherConnections.length > 0 ? otherConnections.length : (targetProfile.connections_count ?? '0')} connections
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* User Identity Info */}
+            <div className="mt-3.5">
+              <div className="flex items-baseline gap-2">
+                <h2 className="font-display font-black text-2xl text-[#4C271A]">
+                  {targetProfile.display_name}
+                </h2>
+                <span className="text-xs font-black text-[#7E4228]">
+                  @{targetProfile.username || 'learner'}
+                </span>
+              </div>
+
+              <p className="text-xs text-[#7E4228] font-semibold mt-1">
+                <span className="font-black text-[#4C271A]">{targetProfile.education_status || 'Student'}</span> · {targetProfile.degree_program || 'General Studies'}
+              </p>
+
+              <div className="flex items-center gap-1.5 text-xs text-[#7E4228] font-medium mt-1.5">
+                <MapPin className="w-3.5 h-3.5 text-[#7E4228] stroke-[2.5]" />
+                <span>
+                  {[targetProfile.city, targetProfile.country].filter(Boolean).join(', ') || 'Global'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Academic Background Card */}
+          <div className="neu-card-floating p-4 space-y-2.5">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[#7E4228] block">
+              Academic Background
+            </span>
+            <div className="flex items-center justify-between text-xs py-1.5 border-b border-[#7E4228]/15">
+              <span className="text-[#7E4228] font-bold">School / University</span>
+              <span className="font-black text-[#4C271A]">{targetProfile.school || 'University'}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs py-1.5 border-b border-[#7E4228]/15">
+              <span className="text-[#7E4228] font-bold">Year Level / Grade</span>
+              <span className="font-black text-[#4C271A]">{targetProfile.year_level || 'Student'}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs py-1.5">
+              <span className="text-[#7E4228] font-bold">Study Style</span>
+              <span className="font-black text-[#4C271A] capitalize">
+                {{ quiet: 'Quiet Focus', discussion: 'Discussion', mixed: 'Mixed Focus', flexible: 'Flexible' }[targetProfile.study_style as StudyStyle] || 'Flexible'}
+              </span>
+            </div>
+          </div>
+
+          {/* Interests to Learn Card */}
+          {targetProfile.learning_interests && targetProfile.learning_interests.length > 0 && (
+            <div className="neu-card-floating p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] font-black uppercase tracking-wider text-[#7E4228]">
+                  Interests to Learn
+                </span>
+                <span className="text-[10px] font-black neu-pill bg-[#EFE7E2] text-[#7E4228] px-2.5 py-0.5 border border-[#7E4228]/20 shadow-sm">
+                  {targetProfile.learning_interests.length} Selected
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {targetProfile.learning_interests.map((item: string) => (
+                  <span
+                    key={item}
+                    className="neu-pill bg-[#EAE5E0] text-[#4C271A] text-xs font-black px-3.5 py-1.5 border border-[#7E4228]/20 flex items-center gap-1.5"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#7E4228] stroke-[2.5]" />
+                    <span>{item}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Skills & Expertise Card */}
+          {targetProfile.skills && targetProfile.skills.length > 0 && (
+            <div className="neu-card-floating p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] font-black uppercase tracking-wider text-[#7E4228]">
+                  Skills & Expertise
+                </span>
+                <span className="text-[10px] font-black neu-pill bg-emerald-50 text-emerald-800 px-2.5 py-0.5 border border-emerald-200 shadow-sm">
+                  {targetProfile.skills.length} Selected
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {targetProfile.skills.map((item: string) => (
+                  <span
+                    key={item}
+                    className="neu-pill bg-emerald-50/70 text-emerald-900 text-xs font-black px-3.5 py-1.5 border border-emerald-300 flex items-center gap-1.5"
+                  >
+                    <Zap className="w-3.5 h-3.5 text-emerald-700 stroke-[2.5]" />
+                    <span>{item}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Study Streak Activity Card */}
+          <div className="neu-card-floating p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <Flame className="w-4 h-4 text-[#7E4228] fill-[#7E4228]" />
+                <span className="text-xs font-black uppercase tracking-wider text-[#4C271A]">
+                  Study Streak Activity
+                </span>
+              </div>
+              <div className="flex items-center gap-1 neu-pill bg-[#EFE7E2] text-[#7E4228] px-2.5 py-0.5 border border-[#7E4228]/20 text-[10px] font-black">
+                <Flame className="w-3 h-3 text-[#7E4228] fill-[#7E4228]" />
+                <span>{userStreak}-Day Streak</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-[#7E4228] font-medium mb-3">
+              Daily study sessions conducted in Duo and Squad
+            </p>
+
+            <div className="bg-[#4C271A] text-[#F1F1F1] rounded-2xl p-3.5 shadow-md border border-white/10 overflow-x-auto no-scrollbar">
+              <div className="flex justify-between text-[9px] font-black text-[#D4B8A6] mb-2 px-6 min-w-[300px]">
+                <span>Oct</span>
+                <span>Nov</span>
+                <span>Dec</span>
+                <span>Jan</span>
+                <span>Feb</span>
+                <span>Mar</span>
+                <span>Apr</span>
+                <span>May</span>
+                <span>Jun</span>
+                <span>Jul</span>
+              </div>
+
+              <div className="flex items-center gap-2 min-w-[300px]">
+                <div className="flex flex-col justify-between text-[8px] font-bold text-[#D4B8A6] h-[88px] pr-1 select-none">
+                  <span>Mon</span>
+                  <span>Wed</span>
+                  <span>Fri</span>
+                </div>
+
+                <div className="flex gap-1">
+                  {streakGrid.map((week, wIdx) => (
+                    <div key={wIdx} className="flex flex-col gap-1">
+                      {week.map((day, dIdx) => {
+                        const intensityColor =
+                          day.count === 0
+                            ? 'bg-[#3B1E14]'
+                            : day.count === 1
+                            ? 'bg-[#15803D]'
+                            : day.count === 2
+                            ? 'bg-[#16A34A]'
+                            : day.count === 3
+                            ? 'bg-[#22C55E]'
+                            : 'bg-[#4ADE80]'
+
+                        return (
+                          <div
+                            key={dIdx}
+                            className={`w-2.5 h-2.5 rounded-[3px] shadow-sm ${intensityColor}`}
+                            title={`${day.date}: ${day.count} sessions`}
+                          />
+                        )
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Sticky Bottom Actions */}
+      <div className="sticky bottom-4 z-30 pt-3">
+        <div className="neu-card-floating p-3 space-y-2 bg-[#F1F1F1]/95 backdrop-blur-md border border-white/80">
+          {/* In-Call / Offline Warning Alert */}
+          {isBusyOrOffline && (
+            <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>
+                {targetProfile.display_name} is currently {targetProfile.online_status || 'offline'}. Session invites cannot be sent right now.
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            {/* If connected: display Connected badge */}
+            {isConnected ? (
+              <div className="flex-1 py-3 px-4 rounded-2xl bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-black flex items-center justify-center gap-1.5 shadow-2xs">
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>Connected</span>
+              </div>
+            ) : hasHadSession ? (
+              /* If NOT connected, but session has completed: show Connect button */
+              <button
+                type="button"
+                onClick={handleConnect}
+                disabled={connecting || isPending}
+                className="flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>{isPending ? 'Request Sent' : connecting ? 'Connecting...' : 'Connect'}</span>
+              </button>
+            ) : null}
+
+            {/* Study in Duo Button (Always present per rule) */}
+            <button
+              type="button"
+              onClick={handleStudy}
+              disabled={isBusyOrOffline}
+              className={`flex-1 py-3.5 px-4 rounded-2xl font-black text-xs text-white shadow-md flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer ${
+                isBusyOrOffline
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
+                  : 'neu-btn-primary bg-[#7E4228] hover:bg-[#6D3821]'
+              }`}
+            >
+              <Video className="w-4 h-4 fill-white" />
+              <span>Study in Duo</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Private Connections Notice Modal */}
+      {privateAlert && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in select-none"
+          onClick={() => setPrivateAlert(false)}
+        >
+          <div
+            className="w-full max-w-sm bg-[#F1F1F1] rounded-3xl neu-card-floating p-6 border border-white/80 shadow-2xl text-[#4C271A] text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 rounded-2xl neu-btn-circle-light flex items-center justify-center mx-auto mb-3 text-[#7E4228]">
+              <Lock className="w-6 h-6 stroke-[2.5]" />
+            </div>
+            <h3 className="font-display font-black text-lg text-[#4C271A] mb-1">
+              Private Connections
+            </h3>
+            <p className="text-xs text-[#7E4228] mb-5 leading-relaxed">
+              This learner has set their connections to private. You can still study with them in Duo to build a connection!
+            </p>
+            <button
+              onClick={() => setPrivateAlert(false)}
+              className="w-full py-3 rounded-2xl neu-btn-primary text-white font-black text-xs cursor-pointer shadow-md"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Public Connections Modal */}
+      {showConnectionsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in select-none"
+          onClick={() => setShowConnectionsModal(false)}
+        >
+          <div
+            className="w-full max-w-sm bg-[#F1F1F1] rounded-3xl neu-card-floating p-5 border border-white/80 shadow-2xl animate-scale-up text-[#4C271A]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl neu-btn-circle-light flex items-center justify-center text-[#7E4228]">
+                  <Users className="w-4 h-4 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h3 className="font-display font-black text-base text-[#4C271A]">
+                    {targetProfile.display_name}&apos;s Connections
+                  </h3>
+                  <p className="text-[10px] font-bold text-[#7E4228] uppercase">
+                    Public Network
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowConnectionsModal(false)}
+                className="w-8 h-8 rounded-full neu-btn-circle-light flex items-center justify-center text-[#4C271A] cursor-pointer"
+              >
+                <X className="w-4 h-4 stroke-[2.5]" />
+              </button>
+            </div>
+
+            <div className="max-h-72 overflow-y-auto space-y-2.5 pr-1">
+              {loadingConnections ? (
+                <div className="py-8 text-center text-xs text-[#7E4228]">
+                  Loading connections...
+                </div>
+              ) : otherConnections.length === 0 ? (
+                <div className="py-8 text-center text-xs text-[#7E4228]">
+                  No connections visible.
+                </div>
+              ) : (
+                otherConnections.map((peer) => {
+                  const isPeerConnected = connections[peer.id]?.status === 'accepted'
+                  return (
+                    <div
+                      key={peer.id}
+                      className="p-3 rounded-2xl neu-card bg-[#F1F1F1] border border-white/70 flex items-center justify-between gap-2.5"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-[#4C271A] p-0.5 flex-shrink-0 flex items-center justify-center overflow-hidden">
+                          <OtterAvatar config={peer.otter_config || peer.otter} size="xs" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-black text-xs text-[#4C271A] truncate">{peer.display_name}</p>
+                          <p className="text-[10px] text-[#7E4228] font-semibold truncate">
+                            {isPeerConnected ? 'Connected with you ✓' : 'Not in your network'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setShowConnectionsModal(false)
+                          navigate(`/profile/${peer.id}`, { state: { viewUser: peer } })
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl neu-btn-raised text-[10px] font-black text-[#7E4228] cursor-pointer"
+                      >
+                        Visit
+                      </button>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ProfilePage() {
   const { profile, setProfile, signOut } = useAuthStore()
   const { connections } = useConnectionStore()
   const navigate = useNavigate()
+  const { userId: paramUserId } = useParams<{ userId?: string }>()
+  const location = useLocation()
+
+  const isOtherUser = Boolean(paramUserId && paramUserId !== profile?.id)
+
+  if (isOtherUser && paramUserId) {
+    return (
+      <VisitorProfileView
+        targetUserId={paramUserId}
+        initialUser={(location.state as any)?.viewUser || (location.state as any)?.user}
+      />
+    )
+  }
 
   const [tab, setTab] = useState<'profile' | 'otter'>('profile')
   const [isEditing, setIsEditing] = useState(false)
@@ -1073,102 +1663,108 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {/* User Settings & Privacy Modal */}
+      {/* User Settings & Privacy Modal (Authentic Neumorphic Design) */}
       {showSettingsModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in select-none"
           onClick={() => setShowSettingsModal(false)}
         >
           <div
-            className="w-full max-w-sm bg-[#FAF2E6] rounded-3xl border-2 border-[#7E4228]/25 shadow-2xl overflow-hidden animate-scale-up text-[#4C271A]"
+            className="w-full max-w-sm bg-[#F1F1F1] rounded-3xl neu-card-floating p-6 border border-white/80 shadow-[10px_10px_30px_rgba(76,39,26,0.18),-10px_-10px_30px_rgba(255,255,255,0.9)] animate-scale-up text-[#4C271A]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="h-1.5 w-full bg-[#7E4228]" />
-            <div className="p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-[#7E4228] text-white flex items-center justify-center shadow-xs">
-                    <Settings className="w-4 h-4 stroke-[2.5]" />
-                  </div>
-                  <div>
-                    <h3 className="font-display font-black text-lg text-[#2D1B11]">
-                      Settings & Privacy
-                    </h3>
-                    <p className="text-[10px] font-bold text-[#7E4228] uppercase tracking-wider">
-                      OpenWorld & Connections
-                    </p>
-                  </div>
+            {/* Header */}
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl neu-btn-circle-light flex items-center justify-center text-[#7E4228]">
+                  <Settings className="w-5 h-5 stroke-[2.5]" />
                 </div>
-                <button
-                  onClick={() => setShowSettingsModal(false)}
-                  className="w-8 h-8 rounded-full clay-btn clay-btn-circle-light flex items-center justify-center text-[#4C271A] cursor-pointer hover:bg-[#E5DFD9] transition-colors"
-                >
-                  <X className="w-4 h-4 stroke-[2.5]" />
-                </button>
-              </div>
-
-              <div className="space-y-3.5">
-                {/* Toggle 1: OpenWorld Map Visibility */}
-                <div className="p-3.5 rounded-2xl bg-[#FFF9F2] border border-[#7E4228]/15 shadow-2xs">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <Globe className="w-4 h-4 text-[#7E4228]" />
-                      <span className="font-display font-black text-sm text-[#2D1B11]">
-                        Visible on OpenMap
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleToggleMapVisibility}
-                      className={`w-12 h-6.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
-                        mapVisible ? 'bg-emerald-600 justify-end' : 'bg-gray-300 justify-start'
-                      }`}
-                    >
-                      <div className="w-5 h-5 rounded-full bg-white shadow-md" />
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-[#7E4228] font-medium leading-relaxed">
-                    {mapVisible
-                      ? 'Visible: Other learners can discover your pin on the live OpenWorld map.'
-                      : 'Invisible: You are hidden from other learners on the OpenWorld map.'}
-                  </p>
-                </div>
-
-                {/* Toggle 2: Connections Privacy */}
-                <div className="p-3.5 rounded-2xl bg-[#FFF9F2] border border-[#7E4228]/15 shadow-2xs">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <Lock className="w-4 h-4 text-[#7E4228]" />
-                      <span className="font-display font-black text-sm text-[#2D1B11]">
-                        Connections Privacy
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleToggleConnectionsPrivate}
-                      className={`w-12 h-6.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
-                        connectionsPrivate ? 'bg-[#7E4228] justify-end' : 'bg-emerald-600 justify-start'
-                      }`}
-                    >
-                      <div className="w-5 h-5 rounded-full bg-white shadow-md" />
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-[#7E4228] font-medium leading-relaxed">
-                    {connectionsPrivate
-                      ? '🔒 Private: Visitors to your profile cannot see your list of connections.'
-                      : '🌐 Public: Anyone who visits your profile can browse your study buddies.'}
+                <div>
+                  <h3 className="font-display font-black text-lg text-[#4C271A]">
+                    Settings & Privacy
+                  </h3>
+                  <p className="text-[10px] font-black text-[#7E4228] uppercase tracking-wider">
+                    OpenWorld & Connections
                   </p>
                 </div>
               </div>
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="w-9 h-9 rounded-2xl neu-btn-circle-light flex items-center justify-center text-[#4C271A] hover:text-[#7E4228] transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4 stroke-[2.5]" />
+              </button>
+            </div>
 
-              <div className="mt-5 pt-3 border-t border-[#7E4228]/15">
-                <button
-                  onClick={() => setShowSettingsModal(false)}
-                  className="w-full py-3 rounded-2xl bg-[#7E4228] hover:bg-[#6D3821] text-white font-black text-xs shadow-md active:scale-95 transition-all cursor-pointer"
-                >
-                  Done
-                </button>
+            <div className="space-y-3.5">
+              {/* Toggle 1: OpenWorld Map Visibility */}
+              <div className="p-4 rounded-2xl neu-card bg-[#F1F1F1] border border-white/80 shadow-sm">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <Globe className="w-4 h-4 text-[#7E4228] stroke-[2.5]" />
+                    <span className="font-display font-black text-sm text-[#4C271A]">
+                      Visible on OpenMap
+                    </span>
+                  </div>
+                  {/* Neumorphic Toggle Switch */}
+                  <button
+                    type="button"
+                    onClick={handleToggleMapVisibility}
+                    className={`w-13 h-7 rounded-full p-1 transition-all duration-200 cursor-pointer flex items-center ${
+                      mapVisible
+                        ? 'bg-[#7E4228] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.35),inset_-1px_-1px_3px_rgba(255,255,255,0.15)] justify-end'
+                        : 'bg-[#E4E4E4] shadow-[inset_2px_2px_5px_rgba(76,39,26,0.12),inset_-2px_-2px_5px_rgba(255,255,255,0.85)] justify-start'
+                    }`}
+                    aria-label="Toggle OpenMap Visibility"
+                  >
+                    <div className="w-5 h-5 rounded-full bg-[#F1F1F1] border border-white/70 shadow-[2px_2px_5px_rgba(76,39,26,0.22),-1px_-1px_3px_rgba(255,255,255,0.95)] transition-all duration-200" />
+                  </button>
+                </div>
+                <p className="text-[11px] text-[#7E4228] font-medium leading-relaxed">
+                  {mapVisible
+                    ? 'Visible: Other learners can discover your pin on the live OpenWorld map.'
+                    : 'Invisible: You are hidden from other learners on the OpenWorld map.'}
+                </p>
               </div>
+
+              {/* Toggle 2: Connections Privacy */}
+              <div className="p-4 rounded-2xl neu-card bg-[#F1F1F1] border border-white/80 shadow-sm">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-[#7E4228] stroke-[2.5]" />
+                    <span className="font-display font-black text-sm text-[#4C271A]">
+                      Connections Privacy
+                    </span>
+                  </div>
+                  {/* Neumorphic Toggle Switch */}
+                  <button
+                    type="button"
+                    onClick={handleToggleConnectionsPrivate}
+                    className={`w-13 h-7 rounded-full p-1 transition-all duration-200 cursor-pointer flex items-center ${
+                      connectionsPrivate
+                        ? 'bg-[#7E4228] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.35),inset_-1px_-1px_3px_rgba(255,255,255,0.15)] justify-end'
+                        : 'bg-[#E4E4E4] shadow-[inset_2px_2px_5px_rgba(76,39,26,0.12),inset_-2px_-2px_5px_rgba(255,255,255,0.85)] justify-start'
+                    }`}
+                    aria-label="Toggle Connections Privacy"
+                  >
+                    <div className="w-5 h-5 rounded-full bg-[#F1F1F1] border border-white/70 shadow-[2px_2px_5px_rgba(76,39,26,0.22),-1px_-1px_3px_rgba(255,255,255,0.95)] transition-all duration-200" />
+                  </button>
+                </div>
+                <p className="text-[11px] text-[#7E4228] font-medium leading-relaxed">
+                  {connectionsPrivate
+                    ? 'Private: Visitors to your profile cannot view your connections list.'
+                    : 'Public: Anyone who visits your profile can browse your study buddies.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 pt-3">
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="w-full py-3.5 rounded-2xl neu-btn-primary font-black text-xs uppercase tracking-wider text-white shadow-warm active:scale-95 transition-all cursor-pointer"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>

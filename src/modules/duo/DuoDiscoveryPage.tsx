@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { X, Heart, RotateCcw, Sparkles, RefreshCw, AlertCircle, Bell } from 'lucide-react'
 import { DuoSwipeCard } from './components/DuoSwipeCard'
 import { DuoMatchModal } from './components/DuoMatchModal'
-import { LearnerProfileModal } from '../../components/LearnerProfileModal'
 import { useConnectionStore } from '../../store/connectionStore'
 import { useAuthStore, isValidUuid } from '../../store/authStore'
 import { useNotificationStore } from '../../store/notificationStore'
@@ -21,8 +20,6 @@ export const DuoDiscoveryPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [matchedPartner, setMatchedPartner] = useState<DemoUser | null>(null)
   const [history, setHistory] = useState<DemoUser[]>([])
-  const [visitedUser, setVisitedUser] = useState<DemoUser | null>(null)
-  const [showProfileModal, setShowProfileModal] = useState(false)
 
   const loadCandidates = async () => {
     if (!profile?.id || !isValidUuid(profile.id)) {
@@ -133,10 +130,7 @@ export const DuoDiscoveryPage: React.FC = () => {
                 isTopCard={false}
                 onSwipeLeft={handleSwipeLeft}
                 onSwipeRight={handleSwipeRight}
-                onVisitProfile={(u) => {
-                  setVisitedUser(u)
-                  setShowProfileModal(true)
-                }}
+                onVisitProfile={(u) => navigate(`/profile/${u.id}`, { state: { viewUser: u } })}
               />
             )}
             <DuoSwipeCard
@@ -145,10 +139,7 @@ export const DuoDiscoveryPage: React.FC = () => {
               isTopCard={true}
               onSwipeLeft={handleSwipeLeft}
               onSwipeRight={handleSwipeRight}
-              onVisitProfile={(u) => {
-                setVisitedUser(u)
-                setShowProfileModal(true)
-              }}
+              onVisitProfile={(u) => navigate(`/profile/${u.id}`, { state: { viewUser: u } })}
             />
           </>
         ) : (
@@ -221,20 +212,7 @@ export const DuoDiscoveryPage: React.FC = () => {
           currentUser={currentUser}
           onStartVideoCall={handleStartVideoCall}
           onClose={() => setMatchedPartner(null)}
-          onVisitProfile={(u) => {
-            setVisitedUser(u)
-            setShowProfileModal(true)
-          }}
-        />
-      )}
-
-      {/* Visited Learner Profile Modal */}
-      {showProfileModal && (
-        <LearnerProfileModal
-          user={visitedUser}
-          isOpen={showProfileModal}
-          onClose={() => setShowProfileModal(false)}
-          onOpenAnotherProfile={(newUser) => setVisitedUser(newUser)}
+          onVisitProfile={(u) => navigate(`/profile/${u.id}`, { state: { viewUser: u } })}
         />
       )}
     </div>
