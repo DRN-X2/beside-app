@@ -299,7 +299,7 @@ export default function HomePage() {
                   </div>
                   <button
                     onClick={() => navigate('/duo', { state: { partner: conn.user } })}
-                    className="neu-btn-primary text-xs font-black py-2 px-3.5 whitespace-nowrap"
+                    className="neu-btn-primary rounded-xl text-xs font-black py-2 px-3.5 whitespace-nowrap cursor-pointer active:scale-95 transition-all shadow-sm"
                   >
                     Study Again
                   </button>
@@ -388,7 +388,7 @@ function MiniMatchCard({
         </span>
         <button
           onClick={onConnect}
-          className="neu-btn-primary text-xs font-black py-1.5 px-3.5 whitespace-nowrap cursor-pointer"
+          className="neu-btn-primary rounded-xl text-xs font-black py-1.5 px-3.5 whitespace-nowrap cursor-pointer active:scale-95 transition-all shadow-sm"
         >
           Study in Duo
         </button>

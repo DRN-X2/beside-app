@@ -237,11 +237,13 @@
   .neu-btn-primary,
   .clay-btn-primary,
   .clay-btn-amber {
+    border-radius: 14px;
     background: #7E4228;
     color: #FFFFFF;
     box-shadow: 
       0 4px 12px rgba(76, 39, 26, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.15);
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .neu-btn-primary:hover,
   .clay-btn-primary:hover,
