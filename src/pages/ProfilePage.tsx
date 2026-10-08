@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -13,10 +13,16 @@ import {
   HelpCircle,
   Sparkles,
   Zap,
+  Settings,
+  Eye,
+  EyeOff,
+  Globe,
+  Lock,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import OtterAvatar from '../components/OtterAvatar'
 import { CountryFlag } from '../shared/components/CountryFlag'
+import { ConfirmationModal } from '../components/ConfirmationModal'
 import { useAuthStore } from '../store/authStore'
 import { useConnectionStore } from '../store/connectionStore'
 import { supabase } from '../lib/supabase'
@@ -103,6 +109,54 @@ export default function ProfilePage() {
 
   const [tab, setTab] = useState<'profile' | 'otter'>('profile')
   const [isEditing, setIsEditing] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
+  const [mapVisible, setMapVisible] = useState(
+    profile?.openworld_visible !== false && profile?.otter_config?.openworld_visible !== false
+  )
+  const [connectionsPrivate, setConnectionsPrivate] = useState(
+    Boolean((profile as any)?.connections_private || profile?.otter_config?.connections_private)
+  )
+
+  useEffect(() => {
+    if (profile) {
+      setMapVisible(profile.openworld_visible !== false && profile.otter_config?.openworld_visible !== false)
+      setConnectionsPrivate(Boolean((profile as any)?.connections_private || profile.otter_config?.connections_private))
+    }
+  }, [profile])
+
+  const handleToggleMapVisibility = async () => {
+    if (!profile?.id) return
+    const next = !mapVisible
+    setMapVisible(next)
+    const updated = {
+      ...profile,
+      openworld_visible: next,
+      otter_config: { ...profile.otter_config, openworld_visible: next },
+    }
+    setProfile(updated)
+    await supabase.from('profiles').update({
+      openworld_visible: next,
+      otter_config: updated.otter_config,
+    }).eq('id', profile.id)
+  }
+
+  const handleToggleConnectionsPrivate = async () => {
+    if (!profile?.id) return
+    const next = !connectionsPrivate
+    setConnectionsPrivate(next)
+    const updated = {
+      ...profile,
+      connections_private: next,
+      otter_config: { ...profile.otter_config, connections_private: next },
+    }
+    setProfile(updated)
+    await supabase.from('profiles').update({
+      connections_private: next,
+      otter_config: updated.otter_config,
+    }).eq('id', profile.id)
+  }
+
   const [otter, setOtter] = useState((profile as any)?.otter_config || profile?.otter || { fur: 'brown', eyes: 'happy', glasses: 'none', clothing: 'hoodie', accessory: 'none', background: 'cream' })
 
   // Edit Form State (Mandatory & Optional fields)
@@ -315,15 +369,24 @@ export default function ProfilePage() {
           <h1 className="font-display font-black text-2xl text-[#4C271A]">
             Profile
           </h1>
-          <button
-            onClick={() => setIsEditing(!isEditing)}
-            className={`w-10 h-10 rounded-2xl neu-btn flex items-center justify-center transition-all ${
-              isEditing ? 'neu-btn-green text-white' : 'neu-btn-circle-light text-[#7E4228]'
-            }`}
-            title={isEditing ? 'Cancel Edit' : 'Edit Profile Info'}
-          >
-            <Edit3 className="w-5 h-5 stroke-[2.5]" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="w-10 h-10 rounded-2xl neu-btn-circle-light flex items-center justify-center text-[#7E4228] transition-all cursor-pointer"
+              title="Settings & Privacy"
+            >
+              <Settings className="w-5 h-5 stroke-[2.5]" />
+            </button>
+            <button
+              onClick={() => setIsEditing(!isEditing)}
+              className={`w-10 h-10 rounded-2xl neu-btn flex items-center justify-center transition-all ${
+                isEditing ? 'neu-btn-green text-white' : 'neu-btn-circle-light text-[#7E4228]'
+              }`}
+              title={isEditing ? 'Cancel Edit' : 'Edit Profile Info'}
+            >
+              <Edit3 className="w-5 h-5 stroke-[2.5]" />
+            </button>
+          </div>
         </div>
 
         {/* Tab switcher: Profile Info / My Otter */}
@@ -623,14 +686,11 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            {/* 6. Solid Red Sign Out Button with Tasteful Shadow (NO glowing white halo) */}
+            {/* 6. Solid Red Sign Out Button with Tasteful Shadow */}
             <div className="pt-2">
               <button
-                onClick={async () => {
-                  await signOut()
-                  navigate('/auth')
-                }}
-                className="w-full py-4 bg-[#DC2626] hover:bg-[#B91C1C] text-white font-display font-black text-sm rounded-2xl shadow-[0_4px_14px_rgba(220,38,38,0.25)] flex items-center justify-center gap-2.5 active:scale-95 transition-all"
+                onClick={() => setShowSignOutConfirm(true)}
+                className="w-full py-4 bg-[#DC2626] hover:bg-[#B91C1C] text-white font-display font-black text-sm rounded-2xl shadow-[0_4px_14px_rgba(220,38,38,0.25)] flex items-center justify-center gap-2.5 active:scale-95 transition-all cursor-pointer"
               >
                 <LogOut className="w-4 h-4 stroke-[2.5]" />
                 <span>Sign Out</span>
@@ -1012,6 +1072,123 @@ export default function ProfilePage() {
           </div>
         </div>
       )}
+
+      {/* User Settings & Privacy Modal */}
+      {showSettingsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in select-none"
+          onClick={() => setShowSettingsModal(false)}
+        >
+          <div
+            className="w-full max-w-sm bg-[#FAF2E6] rounded-3xl border-2 border-[#7E4228]/25 shadow-2xl overflow-hidden animate-scale-up text-[#4C271A]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="h-1.5 w-full bg-[#7E4228]" />
+            <div className="p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-[#7E4228] text-white flex items-center justify-center shadow-xs">
+                    <Settings className="w-4 h-4 stroke-[2.5]" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-black text-lg text-[#2D1B11]">
+                      Settings & Privacy
+                    </h3>
+                    <p className="text-[10px] font-bold text-[#7E4228] uppercase tracking-wider">
+                      OpenWorld & Connections
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowSettingsModal(false)}
+                  className="w-8 h-8 rounded-full clay-btn clay-btn-circle-light flex items-center justify-center text-[#4C271A] cursor-pointer hover:bg-[#E5DFD9] transition-colors"
+                >
+                  <X className="w-4 h-4 stroke-[2.5]" />
+                </button>
+              </div>
+
+              <div className="space-y-3.5">
+                {/* Toggle 1: OpenWorld Map Visibility */}
+                <div className="p-3.5 rounded-2xl bg-[#FFF9F2] border border-[#7E4228]/15 shadow-2xs">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-[#7E4228]" />
+                      <span className="font-display font-black text-sm text-[#2D1B11]">
+                        Visible on OpenMap
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleMapVisibility}
+                      className={`w-12 h-6.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                        mapVisible ? 'bg-emerald-600 justify-end' : 'bg-gray-300 justify-start'
+                      }`}
+                    >
+                      <div className="w-5 h-5 rounded-full bg-white shadow-md" />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-[#7E4228] font-medium leading-relaxed">
+                    {mapVisible
+                      ? 'Visible: Other learners can discover your pin on the live OpenWorld map.'
+                      : 'Invisible: You are hidden from other learners on the OpenWorld map.'}
+                  </p>
+                </div>
+
+                {/* Toggle 2: Connections Privacy */}
+                <div className="p-3.5 rounded-2xl bg-[#FFF9F2] border border-[#7E4228]/15 shadow-2xs">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-[#7E4228]" />
+                      <span className="font-display font-black text-sm text-[#2D1B11]">
+                        Connections Privacy
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleConnectionsPrivate}
+                      className={`w-12 h-6.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                        connectionsPrivate ? 'bg-[#7E4228] justify-end' : 'bg-emerald-600 justify-start'
+                      }`}
+                    >
+                      <div className="w-5 h-5 rounded-full bg-white shadow-md" />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-[#7E4228] font-medium leading-relaxed">
+                    {connectionsPrivate
+                      ? '🔒 Private: Visitors to your profile cannot see your list of connections.'
+                      : '🌐 Public: Anyone who visits your profile can browse your study buddies.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 pt-3 border-t border-[#7E4228]/15">
+                <button
+                  onClick={() => setShowSettingsModal(false)}
+                  className="w-full py-3 rounded-2xl bg-[#7E4228] hover:bg-[#6D3821] text-white font-black text-xs shadow-md active:scale-95 transition-all cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sign Out Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showSignOutConfirm}
+        title="Sign Out of Beside?"
+        message="Are you sure you want to end your current session and sign out of your account?"
+        confirmText="Yes, Sign Out"
+        cancelText="Stay Signed In"
+        variant="danger"
+        onConfirm={async () => {
+          setShowSignOutConfirm(false)
+          await signOut()
+          navigate('/auth')
+        }}
+        onCancel={() => setShowSignOutConfirm(false)}
+      />
     </div>
   )
 }

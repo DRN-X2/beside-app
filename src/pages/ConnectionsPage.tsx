@@ -1,17 +1,24 @@
-import React, { useEffect } from 'react'
-import { ArrowLeft, Check, X, Users, Heart, Bell } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { ArrowLeft, Check, X, Users, Heart, Bell, ExternalLink } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import OtterAvatar from '../components/OtterAvatar'
+import { LearnerProfileModal } from '../components/LearnerProfileModal'
+import { ConfirmationModal } from '../components/ConfirmationModal'
 import { useConnectionStore } from '../store/connectionStore'
 import { useAuthStore } from '../store/authStore'
 import { useNotificationStore } from '../store/notificationStore'
 import { getRelationshipLevel, getRelationshipColor } from '../services/relationships'
+import type { DemoUser } from '../types'
 
 export default function ConnectionsPage() {
   const { connections, acceptRequestDB, rejectRequestDB, fetchConnections } = useConnectionStore()
   const { profile } = useAuthStore()
   const { notifications, togglePanel } = useNotificationStore()
   const navigate = useNavigate()
+
+  const [visitedUser, setVisitedUser] = useState<DemoUser | null>(null)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const [pendingDeclineId, setPendingDeclineId] = useState<string | null>(null)
 
   useEffect(() => {
     if (profile?.id) {
@@ -65,14 +72,28 @@ export default function ConnectionsPage() {
           <div className="space-y-3">
             {pendingReceived.map((conn) => (
               <div key={conn.user.id} className="neu-card p-4 flex items-center gap-3">
-                <OtterAvatar config={conn.user.otter} size="sm" />
-                <div className="flex-1 min-w-0">
+                <div
+                  onClick={() => {
+                    setVisitedUser(conn.user)
+                    setShowProfileModal(true)
+                  }}
+                  className="cursor-pointer"
+                >
+                  <OtterAvatar config={conn.user.otter} size="sm" />
+                </div>
+                <div
+                  className="flex-1 min-w-0 cursor-pointer"
+                  onClick={() => {
+                    setVisitedUser(conn.user)
+                    setShowProfileModal(true)
+                  }}
+                >
                   <p className="font-bold text-sm text-[#4C271A] truncate">{conn.user.display_name}</p>
                   <p className="text-xs text-[#7E4228] font-semibold">{conn.compatibility.score}% compatible</p>
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => rejectRequestDB(conn.user.id)}
+                    onClick={() => setPendingDeclineId(conn.user.id)}
                     className="w-9 h-9 rounded-xl bg-red-100 text-red-700 flex items-center justify-center active:scale-95 border border-red-200 cursor-pointer"
                     title="Decline"
                   >
@@ -104,8 +125,22 @@ export default function ConnectionsPage() {
               const levelColor = getRelationshipColor(level)
               return (
                 <div key={conn.user.id} className="neu-card p-4 flex items-center gap-3">
-                  <OtterAvatar config={conn.user.otter} size="md" />
-                  <div className="flex-1 min-w-0">
+                  <div
+                    onClick={() => {
+                      setVisitedUser(conn.user)
+                      setShowProfileModal(true)
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <OtterAvatar config={conn.user.otter} size="md" />
+                  </div>
+                  <div
+                    className="flex-1 min-w-0 cursor-pointer"
+                    onClick={() => {
+                      setVisitedUser(conn.user)
+                      setShowProfileModal(true)
+                    }}
+                  >
                     <p className="font-black text-sm text-[#4C271A] truncate">{conn.user.display_name}</p>
                     <p className="text-xs text-[#7E4228] truncate">{conn.user.degree_program}</p>
                     <div className="flex items-center gap-2 mt-1">
@@ -117,13 +152,25 @@ export default function ConnectionsPage() {
                       </span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => navigate('/duo', { state: { partner: conn.user } })}
-                    className="px-3.5 py-2 rounded-xl bg-[#7E4228] text-white text-xs font-black flex items-center gap-1.5 shadow-sm hover:bg-[#6D3821] active:scale-95 transition-all cursor-pointer"
-                  >
-                    <Heart className="w-3.5 h-3.5 fill-white" />
-                    <span>Study</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        setVisitedUser(conn.user)
+                        setShowProfileModal(true)
+                      }}
+                      className="px-2.5 py-2 rounded-xl bg-[#FAF2E6] hover:bg-[#E5DFD9] text-[#7E4228] text-xs font-bold border border-[#7E4228]/20 transition-all cursor-pointer"
+                      title="Visit Profile"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => navigate('/duo', { state: { partner: conn.user } })}
+                      className="px-3.5 py-2 rounded-xl bg-[#7E4228] text-white text-xs font-black flex items-center gap-1.5 shadow-sm hover:bg-[#6D3821] active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Heart className="w-3.5 h-3.5 fill-white" />
+                      <span>Study</span>
+                    </button>
+                  </div>
                 </div>
               )
             })}
@@ -172,6 +219,33 @@ export default function ConnectionsPage() {
           </button>
         </div>
       )}
+
+      {/* Visited Learner Profile Modal */}
+      {showProfileModal && (
+        <LearnerProfileModal
+          user={visitedUser}
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+          onOpenAnotherProfile={(newUser) => setVisitedUser(newUser)}
+        />
+      )}
+
+      {/* Decline Request Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={Boolean(pendingDeclineId)}
+        title="Decline Connection Request?"
+        message="Are you sure you want to decline this connection request?"
+        confirmText="Yes, Decline"
+        cancelText="Cancel"
+        variant="warning"
+        onConfirm={async () => {
+          if (pendingDeclineId) {
+            await rejectRequestDB(pendingDeclineId)
+            setPendingDeclineId(null)
+          }
+        }}
+        onCancel={() => setPendingDeclineId(null)}
+      />
     </div>
   )
 }

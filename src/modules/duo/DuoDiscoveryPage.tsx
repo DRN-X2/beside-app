@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { X, Heart, RotateCcw, Sparkles, RefreshCw, AlertCircle, Bell } from 'lucide-react'
 import { DuoSwipeCard } from './components/DuoSwipeCard'
 import { DuoMatchModal } from './components/DuoMatchModal'
+import { LearnerProfileModal } from '../../components/LearnerProfileModal'
 import { useConnectionStore } from '../../store/connectionStore'
 import { useAuthStore, isValidUuid } from '../../store/authStore'
 import { useNotificationStore } from '../../store/notificationStore'
@@ -20,6 +21,8 @@ export const DuoDiscoveryPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [matchedPartner, setMatchedPartner] = useState<DemoUser | null>(null)
   const [history, setHistory] = useState<DemoUser[]>([])
+  const [visitedUser, setVisitedUser] = useState<DemoUser | null>(null)
+  const [showProfileModal, setShowProfileModal] = useState(false)
 
   const loadCandidates = async () => {
     if (!profile?.id || !isValidUuid(profile.id)) {
@@ -87,18 +90,7 @@ export const DuoDiscoveryPage: React.FC = () => {
           </h1>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={togglePanel}
-            className="w-9 h-9 rounded-full clay-btn clay-btn-circle-light flex items-center justify-center text-[#2D1B11] active:scale-95 transition-all relative cursor-pointer"
-            title="Notifications"
-          >
-            <Bell className="w-4 h-4 text-[#6B3410]" />
-            {notifications.length > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#E0533C] text-white text-[9px] font-black flex items-center justify-center ring-2 ring-[#FAF2E6] animate-bounce shadow-xs">
-                {notifications.length}
-              </span>
-            )}
-          </button>
+
           <button
             onClick={loadCandidates}
             disabled={loading}
@@ -141,6 +133,10 @@ export const DuoDiscoveryPage: React.FC = () => {
                 isTopCard={false}
                 onSwipeLeft={handleSwipeLeft}
                 onSwipeRight={handleSwipeRight}
+                onVisitProfile={(u) => {
+                  setVisitedUser(u)
+                  setShowProfileModal(true)
+                }}
               />
             )}
             <DuoSwipeCard
@@ -149,6 +145,10 @@ export const DuoDiscoveryPage: React.FC = () => {
               isTopCard={true}
               onSwipeLeft={handleSwipeLeft}
               onSwipeRight={handleSwipeRight}
+              onVisitProfile={(u) => {
+                setVisitedUser(u)
+                setShowProfileModal(true)
+              }}
             />
           </>
         ) : (
@@ -221,6 +221,20 @@ export const DuoDiscoveryPage: React.FC = () => {
           currentUser={currentUser}
           onStartVideoCall={handleStartVideoCall}
           onClose={() => setMatchedPartner(null)}
+          onVisitProfile={(u) => {
+            setVisitedUser(u)
+            setShowProfileModal(true)
+          }}
+        />
+      )}
+
+      {/* Visited Learner Profile Modal */}
+      {showProfileModal && (
+        <LearnerProfileModal
+          user={visitedUser}
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+          onOpenAnotherProfile={(newUser) => setVisitedUser(newUser)}
         />
       )}
     </div>

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { Video, X, Sparkles, Loader2, AlertCircle } from 'lucide-react'
+import { Video, X, Sparkles, Loader2, AlertCircle, ExternalLink } from 'lucide-react'
 import { OtterAvatarWithBadge } from '../../../shared/components/OtterAvatarWithBadge'
 import { sendLiveDuoInvite, onHubEvent } from '../../../services/realtimeHub'
+import { ConfirmationModal } from '../../../components/ConfirmationModal'
 import type { DemoUser } from '../../../types'
 
 interface DuoMatchModalProps {
@@ -9,15 +10,20 @@ interface DuoMatchModalProps {
   currentUser: DemoUser
   onStartVideoCall: (partner: DemoUser) => void
   onClose: () => void
+  onVisitProfile?: (partner: DemoUser) => void
 }
 
 export const DuoMatchModal: React.FC<DuoMatchModalProps> = ({
   partner,
   currentUser,
   onStartVideoCall,
+  onVisitProfile,
   onClose,
 }) => {
   const [inviteStatus, setInviteStatus] = useState<'idle' | 'waiting' | 'declined'>('idle')
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+
+  const isBusyOrOffline = partner ? ['studying', 'looking', 'offline'].includes(partner.online_status || '') : false
 
   useEffect(() => {
     if (!partner) return
@@ -117,17 +123,45 @@ export const DuoMatchModal: React.FC<DuoMatchModalProps> = ({
         {/* Action States */}
         {inviteStatus === 'idle' && (
           <div className="space-y-2.5">
+            {isBusyOrOffline && (
+              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2 text-left">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>
+                  {partner.display_name} is currently {partner.online_status || 'offline'}. You cannot send a session invite right now.
+                </span>
+              </div>
+            )}
+
             <button
               onClick={handleSendInvite}
-              className="w-full py-3.5 clay-btn clay-btn-primary font-black text-sm text-white shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98 transition-transform"
+              disabled={isBusyOrOffline}
+              className={`w-full py-3.5 font-black text-sm text-white shadow-lg flex items-center justify-center gap-2 transition-transform ${
+                isBusyOrOffline
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none rounded-2xl'
+                  : 'clay-btn clay-btn-primary cursor-pointer active:scale-98'
+              }`}
             >
               <Video className="w-4 h-4 fill-white" />
-              <span>Send Duo Invite</span>
+              <span>{isBusyOrOffline ? 'Learner Unavailable' : 'Send Duo Invite'}</span>
             </button>
+
+            {onVisitProfile && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose()
+                  onVisitProfile(partner)
+                }}
+                className="w-full py-3 clay-btn bg-[#FFF9F2] hover:bg-[#F3E7D5] border border-[#7E4228]/25 font-black text-xs text-[#4C271A] shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-[#7E4228]" />
+                <span>Visit Profile</span>
+              </button>
+            )}
 
             <button
               onClick={handleClose}
-              className="w-full py-3 clay-btn bg-[#FAF2E6] border border-white/60 font-bold text-xs text-[#2D1B11] shadow-sm cursor-pointer"
+              className="w-full py-2.5 clay-btn bg-[#FAF2E6] border border-white/60 font-bold text-xs text-[#2D1B11] shadow-sm cursor-pointer"
             >
               Keep Exploring
             </button>
@@ -144,7 +178,7 @@ export const DuoMatchModal: React.FC<DuoMatchModalProps> = ({
               An invitation was sent to {partner.display_name}. Session starts automatically once accepted.
             </p>
             <button
-              onClick={() => setInviteStatus('idle')}
+              onClick={() => setShowCancelConfirm(true)}
               className="w-full py-2.5 clay-btn bg-[#FAF2E6] border border-black/10 font-bold text-xs text-[#4C271A] cursor-pointer"
             >
               Cancel Invite
@@ -169,6 +203,20 @@ export const DuoMatchModal: React.FC<DuoMatchModalProps> = ({
             </button>
           </div>
         )}
+
+        <ConfirmationModal
+          isOpen={showCancelConfirm}
+          title="Cancel Study Invite?"
+          message={`Are you sure you want to cancel your study session invite to ${partner.display_name}?`}
+          confirmText="Yes, Cancel"
+          cancelText="Keep Waiting"
+          variant="warning"
+          onConfirm={() => {
+            setShowCancelConfirm(false)
+            setInviteStatus('idle')
+          }}
+          onCancel={() => setShowCancelConfirm(false)}
+        />
       </div>
     </div>
   )

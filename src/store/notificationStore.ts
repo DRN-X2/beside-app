@@ -14,12 +14,14 @@ export interface LiveNotification {
   fromUser: DemoUser
   createdAt: number
   read?: boolean
+  status?: 'pending' | 'accepted' | 'declined' | 'expired'
   data?: {
     sessionId?: string
     duration?: number
     subject?: string
     lobbyId?: string
     slotIndex?: number
+    status?: string
   }
 }
 
@@ -31,6 +33,7 @@ interface NotificationState {
   addOrUpdateNotification: (notif: LiveNotification) => void
   dismissNotification: () => void
   removeNotification: (id: string) => Promise<void>
+  updateNotificationStatus: (id: string, status: 'accepted' | 'declined' | 'expired') => void
   markAllAsRead: () => void
   clearAll: () => Promise<void>
   setPanelOpen: (open: boolean) => void
@@ -70,6 +73,15 @@ export const useNotificationStore = create<NotificationState>()((set) => ({
     } catch (e) {
       console.error(e)
     }
+  },
+
+  updateNotificationStatus: (id, status) => {
+    set((state) => ({
+      notifications: state.notifications.map((n) => n.id === id ? { ...n, status } : n),
+      activeNotification: state.activeNotification?.id === id
+        ? { ...state.activeNotification, status }
+        : state.activeNotification,
+    }))
   },
 
   markAllAsRead: () => set((state) => ({

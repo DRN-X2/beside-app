@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Bell,
@@ -34,10 +34,18 @@ export const NotificationCenterModal: React.FC = () => {
     isPanelOpen,
     setPanelOpen,
     removeNotification,
+    updateNotificationStatus,
     clearAll,
   } = useNotificationStore()
   const { addSessionConnection } = useConnectionStore()
   const { startSessionLocally } = useSessionStore()
+
+  // Real-time ticking every 5 seconds so ages and expiration update live
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 5000)
+    return () => clearInterval(timer)
+  }, [])
 
   if (!isPanelOpen || !profile) return null
   const currentUser = profile
@@ -159,6 +167,14 @@ export const NotificationCenterModal: React.FC = () => {
     return `${Math.floor(diff / 3600)}h ago`
   }
 
+  const isNotificationPastOrExpired = (notif: LiveNotification) => {
+    if (notif.status === 'expired' || notif.status === 'declined' || notif.status === 'accepted') return true
+    if (['duo_invite', 'squad_invite'].includes(notif.type)) {
+      return Date.now() - notif.createdAt > 5 * 60 * 1000
+    }
+    return false
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in select-none">
       <div className="w-full max-w-md bg-[#FAF2E6] rounded-3xl border-2 border-[#7E4228]/25 shadow-2xl flex flex-col max-h-[85vh] overflow-hidden animate-scale-up text-[#4C271A]">
@@ -213,103 +229,155 @@ export const NotificationCenterModal: React.FC = () => {
               </p>
             </div>
           ) : (
-            notifications.map((notif) => (
-              <div
-                key={notif.id}
-                className="bg-[#FFF9F2] rounded-2xl p-3.5 border border-[#7E4228]/20 shadow-sm flex flex-col gap-2.5 transition-all"
-              >
-                {/* Top Row: User + Type */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-[#7E4228] p-0.5 flex items-center justify-center flex-shrink-0 overflow-hidden shadow-xs">
-                      <OtterAvatar config={notif.fromUser.otter} size="sm" animate={false} />
+            notifications.map((notif) => {
+              const isPast = isNotificationPastOrExpired(notif)
+              return (
+                <div
+                  key={notif.id}
+                  className={`bg-[#FFF9F2] rounded-2xl p-3.5 border border-[#7E4228]/20 shadow-sm flex flex-col gap-2.5 transition-all ${
+                    isPast ? 'opacity-85' : ''
+                  }`}
+                >
+                  {/* Top Row: User + Type */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-[#7E4228] p-0.5 flex items-center justify-center flex-shrink-0 overflow-hidden shadow-xs">
+                        <OtterAvatar config={notif.fromUser.otter} size="sm" animate={false} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-display font-black text-sm text-[#4C271A] truncate">
+                          {notif.fromUser.display_name}
+                        </p>
+                        <p className="text-[11px] text-[#7E4228] font-medium leading-tight truncate">
+                          {notif.type === 'connect_request' && 'Sent you a connection request'}
+                          {notif.type === 'duo_invite' && `Invited you to a ${notif.data?.duration || 30}m Duo Study Session`}
+                          {notif.type === 'squad_invite' && 'Invited you to join their Squad lobby'}
+                          {notif.type === 'connect_accepted' && 'Accepted your connection request!'}
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="font-display font-black text-sm text-[#4C271A] truncate">
-                        {notif.fromUser.display_name}
-                      </p>
-                      <p className="text-[11px] text-[#7E4228] font-medium leading-tight truncate">
-                        {notif.type === 'connect_request' && 'Sent you a connection request'}
-                        {notif.type === 'duo_invite' && `Invited you to a ${notif.data?.duration || 30}m Duo Study Session`}
-                        {notif.type === 'squad_invite' && 'Invited you to join their Squad lobby'}
-                        {notif.type === 'connect_accepted' && 'Accepted your connection request!'}
-                      </p>
-                    </div>
+
+                    <span className="text-[9px] font-bold text-[#875F49] flex-shrink-0 flex items-center gap-1">
+                      <Clock className="w-2.5 h-2.5" />
+                      <span>{formatTime(notif.createdAt)}</span>
+                    </span>
                   </div>
 
-                  <span className="text-[9px] font-bold text-[#875F49] flex-shrink-0 flex items-center gap-1">
-                    <Clock className="w-2.5 h-2.5" />
-                    <span>{formatTime(notif.createdAt)}</span>
-                  </span>
+                  {/* Bottom Row: Actions */}
+                  <div className="flex items-center justify-end gap-2 pt-1 border-t border-[#7E4228]/10">
+                    {isPast ? (
+                      <div className="flex items-center justify-between w-full">
+                        <div>
+                          {notif.status === 'declined' ? (
+                            <span className="px-2.5 py-0.5 rounded-lg bg-red-100 text-red-700 text-[10px] font-bold">
+                              Declined
+                            </span>
+                          ) : notif.status === 'accepted' ? (
+                            <span className="px-2.5 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                              Joined
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-0.5 rounded-lg bg-[#EFE6D8] text-[#7E4228] text-[10px] font-bold">
+                              Expired
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => removeNotification(notif.id)}
+                          className="p-1 rounded-lg text-[#7E4228] hover:bg-[#E5DFD9] transition-colors cursor-pointer"
+                          title="Remove notification"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        {notif.type === 'connect_request' && (
+                          <>
+                            <button
+                              onClick={() => {
+                                updateNotificationStatus(notif.id, 'declined')
+                                removeNotification(notif.id)
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-[#E5DFD9] hover:bg-[#D8D0C7] text-xs font-bold text-[#4C271A] cursor-pointer"
+                            >
+                              Decline
+                            </button>
+                            <button
+                              onClick={() => {
+                                updateNotificationStatus(notif.id, 'accepted')
+                                handleAcceptConnect(notif)
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-[#7E4228] hover:bg-[#6D3821] text-xs font-black text-white shadow-sm flex items-center gap-1 cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Accept</span>
+                            </button>
+                          </>
+                        )}
+
+                        {notif.type === 'duo_invite' && (
+                          <>
+                            <button
+                              onClick={() => {
+                                updateNotificationStatus(notif.id, 'declined')
+                                handleDeclineDuo(notif)
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-[#E5DFD9] hover:bg-[#D8D0C7] text-xs font-bold text-[#4C271A] cursor-pointer"
+                            >
+                              Decline
+                            </button>
+                            <button
+                              onClick={() => {
+                                updateNotificationStatus(notif.id, 'accepted')
+                                handleAcceptDuo(notif)
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-[#7E4228] hover:bg-[#6D3821] text-xs font-black text-white shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform"
+                            >
+                              <Video className="w-3.5 h-3.5 fill-white" />
+                              <span>Join Call</span>
+                            </button>
+                          </>
+                        )}
+
+                        {notif.type === 'squad_invite' && (
+                          <>
+                            <button
+                              onClick={() => {
+                                updateNotificationStatus(notif.id, 'declined')
+                                handleDeclineSquad(notif)
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-[#E5DFD9] hover:bg-[#D8D0C7] text-xs font-bold text-[#4C271A] cursor-pointer"
+                            >
+                              Decline
+                            </button>
+                            <button
+                              onClick={() => {
+                                updateNotificationStatus(notif.id, 'accepted')
+                                handleAcceptSquad(notif)
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-[#7E4228] hover:bg-[#6D3821] text-xs font-black text-white shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform"
+                            >
+                              <Users className="w-3.5 h-3.5" />
+                              <span>Join Lobby</span>
+                            </button>
+                          </>
+                        )}
+
+                        {notif.type === 'connect_accepted' && (
+                          <button
+                            onClick={() => removeNotification(notif.id)}
+                            className="px-3 py-1.5 rounded-xl bg-[#7E4228] text-white text-xs font-bold cursor-pointer"
+                          >
+                            Dismiss
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
-
-                {/* Bottom Row: Actions */}
-                <div className="flex items-center justify-end gap-2 pt-1 border-t border-[#7E4228]/10">
-                  {notif.type === 'connect_request' && (
-                    <>
-                      <button
-                        onClick={() => removeNotification(notif.id)}
-                        className="px-3 py-1.5 rounded-xl bg-[#E5DFD9] hover:bg-[#D8D0C7] text-xs font-bold text-[#4C271A] cursor-pointer"
-                      >
-                        Decline
-                      </button>
-                      <button
-                        onClick={() => handleAcceptConnect(notif)}
-                        className="px-3 py-1.5 rounded-xl bg-[#7E4228] hover:bg-[#6D3821] text-xs font-black text-white shadow-sm flex items-center gap-1 cursor-pointer"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Accept</span>
-                      </button>
-                    </>
-                  )}
-
-                  {notif.type === 'duo_invite' && (
-                    <>
-                      <button
-                        onClick={() => handleDeclineDuo(notif)}
-                        className="px-3 py-1.5 rounded-xl bg-[#E5DFD9] hover:bg-[#D8D0C7] text-xs font-bold text-[#4C271A] cursor-pointer"
-                      >
-                        Decline
-                      </button>
-                      <button
-                        onClick={() => handleAcceptDuo(notif)}
-                        className="px-3 py-1.5 rounded-xl bg-[#7E4228] hover:bg-[#6D3821] text-xs font-black text-white shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform"
-                      >
-                        <Video className="w-3.5 h-3.5 fill-white" />
-                        <span>Join Call</span>
-                      </button>
-                    </>
-                  )}
-
-                  {notif.type === 'squad_invite' && (
-                    <>
-                      <button
-                        onClick={() => handleDeclineSquad(notif)}
-                        className="px-3 py-1.5 rounded-xl bg-[#E5DFD9] hover:bg-[#D8D0C7] text-xs font-bold text-[#4C271A] cursor-pointer"
-                      >
-                        Decline
-                      </button>
-                      <button
-                        onClick={() => handleAcceptSquad(notif)}
-                        className="px-3 py-1.5 rounded-xl bg-[#7E4228] hover:bg-[#6D3821] text-xs font-black text-white shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform"
-                      >
-                        <Users className="w-3.5 h-3.5" />
-                        <span>Join Lobby</span>
-                      </button>
-                    </>
-                  )}
-
-                  {notif.type === 'connect_accepted' && (
-                    <button
-                      onClick={() => removeNotification(notif.id)}
-                      className="px-3 py-1.5 rounded-xl bg-[#7E4228] text-white text-xs font-bold cursor-pointer"
-                    >
-                      Dismiss
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       </div>

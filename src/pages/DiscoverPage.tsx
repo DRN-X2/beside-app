@@ -75,7 +75,7 @@ export default function DiscoverPage() {
     <div className="page">
       {/* Header */}
       <div className="page-header">
-        <h1 className="font-display text-xl font-bold text-beside-text">Find Your Study Beside</h1>
+        <h1 className="font-display text-xl font-bold text-beside-text">Find Your Study Partner</h1>
         <div className="relative mt-2">
           <Search className="absolute left-3 top-3 w-4 h-4 text-beside-muted" />
           <input

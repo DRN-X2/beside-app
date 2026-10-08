@@ -3,7 +3,7 @@ import { MeetBottomBar } from '../../../shared/components/MeetBottomBar'
 import { OtterAvatarWithBadge } from '../../../shared/components/OtterAvatarWithBadge'
 import { DraggableObjectivesCard } from '../../duo/components/DraggableObjectivesCard'
 import { useAuthStore } from '../../../store/authStore'
-import { useConnectionStore } from '../../../store/connectionStore'
+import { useConnectionStore, recordCompletedSessionPartner } from '../../../store/connectionStore'
 import { CheckCircle2, Clock, Users, VideoOff, MicOff, Mic, Sparkles, MessageSquare, Award, Check, Target } from 'lucide-react'
 import type { DemoUser, DuoObjective } from '../../../types'
 import { useSessionStore } from '../../../store/sessionStore'
@@ -475,6 +475,9 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
                 <>
                   <button
                     onClick={async () => {
+                      teamMembers.forEach((m) => {
+                        if (m.id !== currentUser.id) recordCompletedSessionPartner(m.id)
+                      })
                       unconnectedPeers.forEach((peer) => {
                         sendRequestDB(peer)
                       })
@@ -490,6 +493,9 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
 
                   <button
                     onClick={async () => {
+                      teamMembers.forEach((m) => {
+                        if (m.id !== currentUser.id) recordCompletedSessionPartner(m.id)
+                      })
                       setShowEndModal(false)
                       await endSessionDB()
                       onEndSession()
@@ -502,6 +508,9 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
               ) : (
                 <button
                   onClick={async () => {
+                    teamMembers.forEach((m) => {
+                      if (m.id !== currentUser.id) recordCompletedSessionPartner(m.id)
+                    })
                     setShowEndModal(false)
                     await endSessionDB()
                     onEndSession()

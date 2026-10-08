@@ -6,7 +6,7 @@ import { DraggableObjectivesCard } from './DraggableObjectivesCard'
 import { DuoInCallSharedSpace } from './DuoInCallSharedSpace'
 import { useSessionStore } from '../../../store/sessionStore'
 import { useAuthStore } from '../../../store/authStore'
-import { useConnectionStore } from '../../../store/connectionStore'
+import { useConnectionStore, recordCompletedSessionPartner } from '../../../store/connectionStore'
 import { calculateCompatibility } from '../../../services/compatibility'
 import { WebRTCConnection } from '../../../services/webrtcService'
 import { supabase } from '../../../lib/supabase'
@@ -667,6 +667,7 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
                 <>
                   <button
                     onClick={async () => {
+                      recordCompletedSessionPartner(partner.id)
                       await useSessionStore.getState().endSessionDB()
                       setShowEndModal(false)
                       onEndSession()
@@ -686,6 +687,7 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
                 <>
                   <button
                     onClick={async () => {
+                      recordCompletedSessionPartner(partner.id)
                       const compat = calculateCompatibility(currentUser, partner)
                       addSessionConnection(partner, compat, duration, completedCount)
                       await sendRequestDB(partner)
@@ -701,6 +703,7 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
 
                   <button
                     onClick={async () => {
+                      recordCompletedSessionPartner(partner.id)
                       await useSessionStore.getState().endSessionDB()
                       setShowEndModal(false)
                       onEndSession()

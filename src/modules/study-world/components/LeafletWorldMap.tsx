@@ -30,13 +30,13 @@ interface LeafletWorldMapProps {
   onSelectCluster: (cluster: ClusterGroup) => void
 }
 
-const STATUS_COLORS: Record<string, { ring: string; bg: string; glow: string }> = {
-  available: { ring: '#22c55e', bg: '#15803d', glow: '0 0 10px rgba(34,197,94,0.7)' },
-  online:    { ring: '#22c55e', bg: '#15803d', glow: '0 0 10px rgba(34,197,94,0.7)' },
-  studying:  { ring: '#3b82f6', bg: '#1d4ed8', glow: '0 0 10px rgba(59,130,246,0.7)' },
-  looking:   { ring: '#8b5cf6', bg: '#6d28d9', glow: '0 0 10px rgba(139,92,246,0.7)' },
-  away:      { ring: '#f59e0b', bg: '#b45309', glow: '0 0 10px rgba(245,158,11,0.7)' },
-  offline:   { ring: '#6b7280', bg: '#374151', glow: 'none' },
+const STATUS_COLORS: Record<string, { ring: string; bg: string }> = {
+  available: { ring: '#22c55e', bg: '#15803d' },
+  online:    { ring: '#22c55e', bg: '#15803d' },
+  studying:  { ring: '#3b82f6', bg: '#1d4ed8' },
+  looking:   { ring: '#8b5cf6', bg: '#6d28d9' },
+  away:      { ring: '#f59e0b', bg: '#b45309' },
+  offline:   { ring: '#9ca3af', bg: '#6b7280' },
 }
 
 function getStatusColor(status: string) {
@@ -60,9 +60,9 @@ function clusterLearners(learners: OpenWorldUser[]): ClusterGroup[] {
 
 function makeAvatarIcon(user: OpenWorldUser, isConnected: boolean, isCurrent = false): L.DivIcon {
   const sc = getStatusColor(user.online_status || (isCurrent ? 'online' : 'offline'))
-  const size = isCurrent ? 44 : 36
-  const otterHtml = renderToString(<OtterAvatar config={user.otter_config || user.otter} size="xs" />)
-  const ringW = isCurrent ? 3 : 2.5
+  const size = 40 // Uniform size for all avatars on OpenWorld
+  const otterHtml = renderToString(<OtterAvatar config={user.otter_config || user.otter} size="xs" animate={false} />)
+  const flagCode = (user.country_code || '').toLowerCase()
 
   const html = `
     <div style="
@@ -71,84 +71,100 @@ function makeAvatarIcon(user: OpenWorldUser, isConnected: boolean, isCurrent = f
       height:${size}px;
       cursor:pointer;
     ">
-      <!-- Glow pulse -->
-      ${sc.ring !== '#6b7280' ? `<div style="
-        position:absolute;
-        inset:-6px;
-        border-radius:50%;
-        background:${sc.ring};
-        opacity:0.25;
-        animation:owPulse 2s ease-in-out infinite;
-      "></div>` : ''}
-      <!-- Status ring -->
+      <!-- Minimal status ring without pulsating animation -->
       <div style="
         position:absolute;
-        inset:-${ringW + 2}px;
+        inset:-2.5px;
         border-radius:50%;
-        border:${ringW}px solid ${sc.ring};
-        box-shadow:${sc.glow};
+        border:2.5px solid ${isCurrent ? '#7E4228' : sc.ring};
+        background:transparent;
       "></div>
-      ${isCurrent ? `<div style="
-        position:absolute;
-        inset:-${ringW + 5}px;
-        border-radius:50%;
-        border:2px solid #C68642;
-        opacity:0.75;
-      "></div>` : ''}
-      <!-- Avatar circle with neumorphic shadow -->
+
+      <!-- Avatar circle -->
       <div style="
         width:${size}px;
         height:${size}px;
         border-radius:50%;
-        background:linear-gradient(135deg,#3D2210,#1E0F07);
-        border:2px solid ${isCurrent ? '#C68642' : '#4A3022'};
+        background:#FAF2E6;
+        border:2px solid #FFF9F2;
         display:flex;
         align-items:center;
         justify-content:center;
-        font-family:Outfit,Inter,sans-serif;
-        font-weight:900;
-        font-size:${isCurrent ? 14 : 12}px;
-        color:#F5E8D0;
-        box-shadow:4px 4px 10px #120804, -3px -3px 8px #4A3022;
+        box-shadow:0 2px 8px rgba(126,66,40,0.3);
         overflow:hidden;
         position:relative;
       ">
         ${otterHtml}
       </div>
-      <!-- Connection dot -->
-      ${isConnected && !isCurrent ? `<div style="
-        position:absolute;
-        top:-2px;
-        right:-2px;
-        width:11px;
-        height:11px;
-        border-radius:50%;
-        background:#C68642;
-        border:2px solid #0F0906;
-        box-shadow:0 0 8px rgba(198,134,66,0.9);
-      "></div>` : ''}
-      ${isCurrent ? `<div style="
-        position:absolute;
-        bottom:-19px;
-        left:50%;
-        transform:translateX(-50%);
-        background:#C68642;
-        color:#1E0F07;
-        font-size:9px;
-        font-weight:900;
-        font-family:Outfit,sans-serif;
-        padding:1px 6px;
-        border-radius:6px;
-        white-space:nowrap;
-        letter-spacing:0.05em;
-        box-shadow:0 2px 6px rgba(0,0,0,0.6);
-      ">YOU</div>` : ''}
+
+      <!-- Country Flag Badge -->
+      ${flagCode ? `
+        <div style="
+          position:absolute;
+          bottom:-3px;
+          right:-3px;
+          width:16px;
+          height:16px;
+          border-radius:50%;
+          background:#FAF2E6;
+          border:1.5px solid #7E4228;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          box-shadow:0 1px 4px rgba(0,0,0,0.25);
+          overflow:hidden;
+          z-index:10;
+        ">
+          <img
+            src="https://flagcdn.com/w20/${flagCode}.png"
+            alt="${user.country_code}"
+            style="width:100%;height:100%;object-fit:cover;"
+          />
+        </div>
+      ` : ''}
+
+      <!-- Connected check badge -->
+      ${isConnected && !isCurrent ? `
+        <div style="
+          position:absolute;
+          top:-3px;
+          right:-3px;
+          width:13px;
+          height:13px;
+          border-radius:50%;
+          background:#10b981;
+          border:1.5px solid #FAF2E6;
+          box-shadow:0 1px 3px rgba(0,0,0,0.2);
+          z-index:11;
+        "></div>
+      ` : ''}
+
+      <!-- YOU badge for current user -->
+      ${isCurrent ? `
+        <div style="
+          position:absolute;
+          bottom:-18px;
+          left:50%;
+          transform:translateX(-50%);
+          background:#7E4228;
+          color:#FFFFFF;
+          font-size:9px;
+          font-weight:900;
+          font-family:Outfit,sans-serif;
+          padding:1px 6px;
+          border-radius:6px;
+          white-space:nowrap;
+          letter-spacing:0.04em;
+          box-shadow:0 2px 4px rgba(0,0,0,0.3);
+          border:1px solid #FAF2E6;
+        ">YOU</div>
+      ` : ''}
     </div>
   `
   return L.divIcon({
     html,
     className: '',
-    iconSize: [size, isCurrent ? size + 22 : size],
+    iconSize: [size, isCurrent ? size + 20 : size],
     iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -size / 2 - 5],
   })
@@ -156,7 +172,7 @@ function makeAvatarIcon(user: OpenWorldUser, isConnected: boolean, isCurrent = f
 
 function makeClusterIcon(cluster: ClusterGroup, hasConnection: boolean): L.DivIcon {
   const count = cluster.users.length
-  const size = Math.min(52, 38 + Math.log2(count) * 4)
+  const size = Math.min(50, 38 + Math.log2(count) * 3.5)
   const html = `
     <div style="
       position:relative;
@@ -164,27 +180,28 @@ function makeClusterIcon(cluster: ClusterGroup, hasConnection: boolean): L.DivIc
       height:${size}px;
       cursor:pointer;
     ">
+      <!-- Minimal clean ring -->
       <div style="
         position:absolute;
-        inset:-8px;
+        inset:-3px;
         border-radius:50%;
-        background:rgba(198,134,66,0.18);
-        animation:owPulse 2.5s ease-in-out infinite;
+        border:2px solid ${hasConnection ? '#E05242' : '#7E4228'};
+        opacity:0.4;
       "></div>
       <div style="
         width:${size}px;
         height:${size}px;
         border-radius:50%;
-        background:linear-gradient(135deg,#7E4228,#4A2514);
-        border:${hasConnection ? '2.5px solid #C68642' : '2px solid #5A3520'};
+        background:linear-gradient(135deg,#7E4228,#924D30);
+        border:2px solid #FAF2E6;
         display:flex;
         align-items:center;
         justify-content:center;
         font-family:Outfit,Inter,sans-serif;
         font-weight:900;
-        font-size:${count > 9 ? 12 : 14}px;
-        color:#F5E8D0;
-        box-shadow:4px 4px 12px #120804, -3px -3px 8px #5A3520;
+        font-size:${count > 9 ? 12 : 13}px;
+        color:#FFFFFF;
+        box-shadow:0 3px 10px rgba(126,66,40,0.35);
       ">${count > 99 ? '99+' : count}</div>
       <div style="
         position:absolute;
@@ -194,9 +211,9 @@ function makeClusterIcon(cluster: ClusterGroup, hasConnection: boolean): L.DivIc
         font-size:10px;
         font-weight:800;
         font-family:Outfit,sans-serif;
-        color:#E8B375;
+        color:#4C271A;
         white-space:nowrap;
-        text-shadow:0 2px 4px rgba(0,0,0,0.9);
+        text-shadow:0 1px 2px rgba(255,255,255,0.8);
         max-width:90px;
         overflow:hidden;
         text-overflow:ellipsis;
@@ -231,11 +248,10 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
     [learners, connectedIds]
   )
 
-  // Init map
+  // Initialize Map
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
-    // Center on user location if available, otherwise default to southeast asia / pacific center [15, 120]
     const defaultCenter: [number, number] = currentUser?.city && currentUser?.country
       ? getCityLatLng(currentUser.city, currentUser.country)
       : [15, 120]
@@ -250,15 +266,16 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
       worldCopyJump: true,
     })
 
-    // Esri World Dark Gray Base (free, no API key required, zero watermark)
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+    // Esri Canvas Light Gray Base with warm cream styling
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 16,
+      className: 'beside-warm-map-tiles',
     }).addTo(map)
 
-    // Esri World Dark Gray Reference (clean country & city labels)
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+    // Esri World Light Gray Reference for crisp city/country labels
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 16,
-      opacity: 0.85,
+      opacity: 0.9,
     }).addTo(map)
 
     L.control.attribution({ position: 'bottomleft', prefix: '© Esri, HERE' }).addTo(map)
@@ -276,7 +293,7 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
     }
   }, [])
 
-  // Update markers whenever learners, connections, or zoom changes
+  // Update markers and glowing red network lines
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -290,23 +307,33 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
     const zoom = currentZoom
     const CLUSTER_ZOOM = 7
 
-    // Draw connection lines
+    // Draw glowing red network lines between connected study buddies
     if (currentUser) {
       const [curLat, curLng] = getCityLatLng(currentUser.city || '', currentUser.country || '')
 
       connectedLearners.forEach(cu => {
         const [lat, lng] = getCityLatLng(cu.city || '', cu.country || '')
-        const line = L.polyline([[curLat, curLng], [lat, lng]], {
-          color: '#C68642',
-          weight: 2,
-          opacity: 0.65,
-          dashArray: '6 5',
+
+        // Soft outer glow polyline
+        const glowLine = L.polyline([[curLat, curLng], [lat, lng]], {
+          color: '#E05242',
+          weight: 6,
+          opacity: 0.28,
         }).addTo(map)
-        linesRef.current.push(line)
+        linesRef.current.push(glowLine)
+
+        // Core glowing red line
+        const coreLine = L.polyline([[curLat, curLng], [lat, lng]], {
+          color: '#E05242',
+          weight: 2.4,
+          opacity: 0.9,
+          dashArray: '6 4',
+        }).addTo(map)
+        linesRef.current.push(coreLine)
       })
     }
 
-    // Render clusters or individual markers based on zoom level
+    // Render clusters or individual markers
     if (zoom < CLUSTER_ZOOM) {
       clusters.forEach(cluster => {
         const hasConn = cluster.users.some(u => connectedIds.has(u.id))
@@ -326,7 +353,6 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
     } else {
       learners.forEach((user, idx) => {
         const [lat, lng] = getCityLatLng(user.city || '', user.country || '')
-        // Gentle jitter for multiple users in same city at high zoom
         const jLat = lat + ((idx * 0.003) % 0.012) - 0.006
         const jLng = lng + ((idx * 0.004) % 0.016) - 0.008
         const isConnected = connectedIds.has(user.id)
@@ -354,7 +380,6 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
     }
   }, [learners, clusters, connectedLearners, connectedIds, currentUser, currentZoom, onSelectUser, onSelectCluster])
 
-  // Neumorphic zoom controls
   const zoomIn = useCallback(() => mapRef.current?.zoomIn(), [])
   const zoomOut = useCallback(() => mapRef.current?.zoomOut(), [])
   const resetView = useCallback(() => {
@@ -367,61 +392,33 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
   }, [currentUser])
 
   return (
-    <div className="relative w-full h-full select-none">
+    <div className="relative w-full h-full select-none bg-[#FAF2E6]">
+      <style>{`
+        .beside-warm-map-tiles {
+          filter: sepia(0.28) saturate(0.85) contrast(0.96) brightness(0.99) !important;
+        }
+      `}</style>
+
       {/* Map container */}
       <div ref={containerRef} className="w-full h-full" />
 
-      {/* Neumorphic floating controls */}
-      <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-2.5 z-[500]">
+      {/* Warm Clay Zoom Controls */}
+      <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-[500]">
         {[
           { icon: '+', action: zoomIn, label: 'Zoom In' },
-          { icon: '⌖', action: resetView, label: 'Center Me', isCenter: true },
+          { icon: '⌖', action: resetView, label: 'Center Me' },
           { icon: '−', action: zoomOut, label: 'Zoom Out' },
         ].map(b => (
           <button
             key={b.label}
             onClick={b.action}
             title={b.label}
-            className="w-10 h-10 flex items-center justify-center font-black text-[#D89A53] transition-all active:scale-95 hover:text-[#F5E8D0]"
-            style={{
-              borderRadius: '14px',
-              background: '#2B1C13',
-              boxShadow: '4px 4px 10px #150A05, -3px -3px 8px #452D1E',
-              fontSize: b.isCenter ? '18px' : '20px',
-              border: '1px solid #3E2719',
-            }}
+            className="w-10 h-10 rounded-2xl bg-[#FFF9F2] hover:bg-[#F3E7D5] border border-[#7E4228]/25 text-[#4C271A] font-black text-lg flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer"
           >
             {b.icon}
           </button>
         ))}
       </div>
-
-      {/* Styles for Leaflet dark warm styling & pulse animations */}
-      <style>{`
-        @keyframes owPulse {
-          0%,100% { opacity:0.25; transform:scale(1); }
-          50% { opacity:0.6; transform:scale(1.25); }
-        }
-        .leaflet-container {
-          background: #150A05 !important;
-          outline: none;
-        }
-        .leaflet-tile-pane {
-          filter: brightness(0.9) contrast(1.15) sepia(0.2) hue-rotate(345deg);
-        }
-        .leaflet-attribution-flag { display:none !important; }
-        .leaflet-control-attribution {
-          background: rgba(27,15,9,0.85) !important;
-          color: #7A5B45 !important;
-          font-size: 9px !important;
-          backdrop-filter: blur(6px);
-          border-radius: 8px 0 0 0 !important;
-          padding: 3px 8px !important;
-          border-top: 1px solid rgba(255,255,255,0.05);
-          border-left: 1px solid rgba(255,255,255,0.05);
-        }
-        .leaflet-control-attribution a { color: #A67C52 !important; text-decoration: none; }
-      `}</style>
     </div>
   )
 }

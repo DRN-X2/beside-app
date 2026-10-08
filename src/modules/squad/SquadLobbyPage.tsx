@@ -363,18 +363,7 @@ export const SquadLobbyPage: React.FC = () => {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={togglePanel}
-              className="w-8 h-8 rounded-full clay-btn clay-btn-circle-light flex items-center justify-center text-[#2D1B11] active:scale-95 transition-all relative cursor-pointer"
-              title="Notifications"
-            >
-              <Bell className="w-3.5 h-3.5 text-[#6B3410]" />
-              {notifications.length > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#E0533C] text-white text-[9px] font-black flex items-center justify-center ring-2 ring-[#FAF2E6] animate-bounce shadow-xs">
-                  {notifications.length}
-                </span>
-              )}
-            </button>
+
             <div className="clay-btn-amber px-3 py-1.5 rounded-full text-xs font-black flex items-center gap-1.5 shadow-md">
               <Users className="w-3.5 h-3.5" />
               <span>{joinedCount}/5 Joined</span>

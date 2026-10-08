@@ -140,6 +140,31 @@ export function getOrCreateHubChannel() {
     .on(
       'postgres_changes',
       {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'notifications',
+      },
+      (payload) => {
+        const notifRow = payload.new as any
+        if (notifRow && notifRow.id) {
+          useNotificationStore.setState((prev) => ({
+            notifications: prev.notifications.map((n) =>
+              n.id === notifRow.id
+                ? {
+                    ...n,
+                    read: notifRow.read,
+                    status: notifRow.data?.status || (notifRow.read ? 'accepted' : n.status),
+                    data: notifRow.data || n.data,
+                  }
+                : n
+            ),
+          }))
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
         event: 'DELETE',
         schema: 'public',
         table: 'notifications',

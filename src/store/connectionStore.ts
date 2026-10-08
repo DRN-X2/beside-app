@@ -15,6 +15,27 @@ export interface ConnectionEntry {
   goalsCompleted: number
 }
 
+export function hasCompletedSessionWith(userId: string): boolean {
+  if (!userId) return false
+  try {
+    const past = JSON.parse(localStorage.getItem('beside_completed_sessions') || '[]')
+    return Array.isArray(past) && past.includes(userId)
+  } catch {
+    return false
+  }
+}
+
+export function recordCompletedSessionPartner(userId: string): void {
+  if (!userId) return
+  try {
+    const past = JSON.parse(localStorage.getItem('beside_completed_sessions') || '[]')
+    if (Array.isArray(past) && !past.includes(userId)) {
+      past.push(userId)
+      localStorage.setItem('beside_completed_sessions', JSON.stringify(past))
+    }
+  } catch {}
+}
+
 interface ConnectionState {
   connections: Record<string, ConnectionEntry>
   isLoading: boolean

@@ -203,7 +203,7 @@ export default function HomePage() {
           <div className="flex items-center justify-between relative z-10">
             <div>
               <p className="font-display text-xl font-black mb-1 text-white">
-                Find Your Study Beside
+                Find Your Study Partner
               </p>
               <p className="text-xs text-white/85 font-medium">
                 Ready to learn beside someone?

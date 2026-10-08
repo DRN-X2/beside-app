@@ -1,16 +1,13 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { X, MapPin, UserCheck, Clock, UserX, Check, Video } from 'lucide-react'
+import { X, MapPin, Video, UserPlus, UserCheck, AlertCircle } from 'lucide-react'
 import OtterAvatar from '../../../components/OtterAvatar'
+import { CountryFlag } from '../../../shared/components/CountryFlag'
 import type { OpenWorldUser } from '../../../services/openWorldService'
-import { sendConnectionRequest, acceptConnectionRequest, declineConnectionRequest } from '../../../services/openWorldService'
+import { sendConnectionRequest } from '../../../services/openWorldService'
 import { useAuthStore } from '../../../store/authStore'
-
-const NEU_BASE = '#2B1C13'
-const NEU_DARK = '#180D08'
-const NEU_LIGHT = '#3E2A1E'
-const NEU_SHADOW = `4px 4px 10px ${NEU_DARK}, -3px -3px 8px ${NEU_LIGHT}`
-const NEU_INSET = `inset 3px 3px 7px ${NEU_DARK}, inset -2px -2px 6px ${NEU_LIGHT}`
+import { useConnectionStore, hasCompletedSessionWith } from '../../../store/connectionStore'
+import { LearnerProfileModal } from '../../../components/LearnerProfileModal'
 
 interface DiscoveryCardProps {
   user: OpenWorldUser
@@ -19,180 +16,194 @@ interface DiscoveryCardProps {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  available: '🟢 Available',
-  online:    '🟢 Available',
-  studying:  '🔵 In Duo',
-  looking:   '🟣 In Squad',
-  away:      '🟡 Away',
-  offline:   '⚫ Offline',
+  available: 'Available',
+  online:    'Available',
+  studying:  'In Duo Call',
+  looking:   'In Squad',
+  away:      'Away',
+  offline:   'Offline',
 }
 
 export const DiscoveryCard: React.FC<DiscoveryCardProps> = ({ user, onClose, onConnected }) => {
   const navigate = useNavigate()
-  const { profile } = useAuthStore()
+  const { profile: currentUser } = useAuthStore()
+  const { connections, sendRequestDB } = useConnectionStore()
+
   const [loading, setLoading] = useState(false)
-  const [localStatus, setLocalStatus] = useState(user.connectionStatus)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const [visitedUser, setVisitedUser] = useState<any>(user)
+  const [requestSent, setRequestSent] = useState(false)
+
+  const isMe = currentUser?.id === user.id
+  const isAlreadyConnected = connections[user.id]?.status === 'accepted' || user.connectionStatus === 'CONNECTED'
+  const hasHadSession = hasCompletedSessionWith(user.id)
+  const isPending = connections[user.id]?.status === 'pending_sent' || requestSent
+
+  const isBusyOrOffline = ['studying', 'looking', 'offline'].includes(user.online_status || '')
 
   const handleConnect = async () => {
-    if (!profile?.id) return
+    if (!currentUser?.id || isAlreadyConnected || isPending) return
     setLoading(true)
-    const { error } = await sendConnectionRequest(profile.id, user.id)
-    if (!error) setLocalStatus('REQUEST_SENT')
-    setLoading(false)
+    try {
+      await sendRequestDB(user as any)
+      await sendConnectionRequest(currentUser.id, user.id)
+      setRequestSent(true)
+      onConnected()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const handleAccept = async () => {
-    if (!user.connectionId) return
-    setLoading(true)
-    const { error } = await acceptConnectionRequest(user.connectionId)
-    if (!error) { setLocalStatus('CONNECTED'); onConnected() }
-    setLoading(false)
+  const handleStudy = () => {
+    if (isBusyOrOffline) return
+    onClose()
+    navigate('/duo', { state: { partner: user, initiated: true } })
   }
-
-  const handleDecline = async () => {
-    if (!user.connectionId) return
-    setLoading(true)
-    const { error } = await declineConnectionRequest(user.connectionId)
-    if (!error) setLocalStatus('DECLINED')
-    setLoading(false)
-  }
-
-  const interests = (user.learning_interests || user.subjects || []).slice(0, 4)
-
-  const statusDotColor = user.online_status === 'studying' ? '#3b82f6'
-    : user.online_status === 'looking' ? '#8b5cf6'
-    : user.online_status === 'offline' ? '#6b7280'
-    : '#22c55e'
 
   return (
-    <div className="fixed inset-0 z-[700] flex items-end justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}
-      onClick={onClose}>
+    <>
       <div
-        className="w-full max-w-md overflow-hidden"
-        style={{ background: NEU_BASE, boxShadow: '0 -8px 40px rgba(0,0,0,0.6), ' + NEU_SHADOW, borderRadius: '28px' }}
-        onClick={e => e.stopPropagation()}
+        className="fixed inset-0 z-[700] flex items-end justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in select-none"
+        onClick={onClose}
       >
-        {/* Gold accent bar */}
-        <div className="h-1 w-full" style={{ background: 'linear-gradient(90deg,#7E4228,#C68642,#7E4228)' }} />
+        <div
+          className="w-full max-w-md bg-[#FAF2E6] rounded-3xl border-2 border-[#7E4228]/25 shadow-2xl overflow-hidden animate-slide-up text-[#4C271A]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Top Warm Terracotta Accent */}
+          <div className="h-1.5 w-full bg-[#7E4228]" />
 
-        <div className="p-5">
-          {/* Header row */}
-          <div className="flex items-start gap-4 mb-4">
-            {/* Avatar */}
-            <div className="relative flex-shrink-0">
-              <div className="w-16 h-16 rounded-2xl overflow-hidden"
-                style={{ background: '#1E0F07', boxShadow: NEU_INSET }}>
-                <OtterAvatar config={user.otter || user.otter_config} size="lg" />
+          <div className="p-5">
+            {/* Header / Avatar Row */}
+            <div className="flex items-start gap-4 mb-4">
+              {/* Avatar with country flag */}
+              <div className="relative flex-shrink-0">
+                <div className="w-16 h-16 rounded-2xl bg-[#7E4228] p-1 flex items-center justify-center shadow-md overflow-hidden">
+                  <OtterAvatar config={user.otter || user.otter_config} size="md" animate={false} />
+                </div>
+                {user.country_code && (
+                  <div className="absolute -bottom-1 -right-1 scale-90 rounded-full ring-2 ring-white shadow-xs">
+                    <CountryFlag countryCode={user.country_code} size="xs" />
+                  </div>
+                )}
               </div>
-              {/* Status dot */}
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2"
-                style={{ backgroundColor: statusDotColor, borderColor: NEU_BASE, boxShadow: `0 0 6px ${statusDotColor}` }} />
+
+              {/* Basic Learner Info Only (Minimal) */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-display font-black text-lg text-[#2D1B11] truncate">
+                    {user.display_name}
+                  </h3>
+                  {isAlreadyConnected && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black flex items-center gap-1 shadow-2xs">
+                      <UserCheck className="w-2.5 h-2.5" />
+                      <span>Connected</span>
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-xs text-[#7E4228] font-bold mt-0.5 truncate">
+                  {user.degree_program || user.degree_code || 'Learner'} · {user.school || 'Student'}
+                </p>
+
+                <div className="flex items-center gap-2 mt-1.5 text-[11px] text-[#875F49] font-medium">
+                  <div className="flex items-center gap-1">
+                    <MapPin className="w-3 h-3 text-[#7E4228]" />
+                    <span>{[user.city, user.country].filter(Boolean).join(', ') || 'Global'}</span>
+                  </div>
+                  <span>·</span>
+                  <span
+                    className={`px-2 py-0.2 rounded-full text-[10px] font-black ${
+                      user.online_status === 'studying'
+                        ? 'bg-blue-100 text-blue-800'
+                        : user.online_status === 'looking'
+                        ? 'bg-purple-100 text-purple-800'
+                        : user.online_status === 'offline'
+                        ? 'bg-gray-100 text-gray-700'
+                        : 'bg-emerald-100 text-emerald-800'
+                    }`}
+                  >
+                    {STATUS_LABEL[user.online_status || 'offline'] || 'Offline'}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-full clay-btn clay-btn-circle-light flex items-center justify-center text-[#4C271A] cursor-pointer hover:bg-[#E5DFD9] transition-colors"
+              >
+                <X className="w-4 h-4 stroke-[2.5]" />
+              </button>
             </div>
 
-            <div className="flex-1 min-w-0">
-              <h3 className="font-display font-black text-[#F5E8D0] text-base leading-tight truncate">
-                {user.display_name}
-              </h3>
-              <p className="text-[11px] text-[#C68642] font-bold mt-0.5 truncate">
-                {user.degree_program || user.degree_code}
-              </p>
-              <div className="flex items-center gap-1 mt-1">
-                <MapPin className="w-3 h-3 text-[#8B5E3C]" />
-                <span className="text-[10px] text-[#9B7B5A]">
-                  {[user.city, user.country].filter(Boolean).join(', ')}
+            {/* Offline or in-call warning message */}
+            {isBusyOrOffline && (
+              <div className="mb-4 p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>
+                  {user.display_name} is currently {STATUS_LABEL[user.online_status || 'offline'].toLowerCase()}. Session invites cannot be sent right now.
                 </span>
               </div>
-              <p className="text-[10px] text-[#8B8B6B] mt-0.5">
-                {STATUS_LABEL[user.online_status || 'offline'] || '⚫ Offline'}
-              </p>
-            </div>
-
-            <button onClick={onClose}
-              className="w-8 h-8 flex items-center justify-center text-[#9B7B5A] flex-shrink-0 transition-all active:scale-95"
-              style={{ background: NEU_BASE, boxShadow: NEU_SHADOW, borderRadius: '50%' }}>
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Interests */}
-          {interests.length > 0 && (
-            <div className="mb-4">
-              <p className="text-[9px] font-black text-[#C68642] uppercase tracking-widest mb-1.5">Interests</p>
-              <div className="flex flex-wrap gap-1.5">
-                {interests.map(i => (
-                  <span key={i} className="px-2.5 py-1 text-[10px] font-semibold text-[#C68642]"
-                    style={{ background: NEU_BASE, boxShadow: NEU_SHADOW, borderRadius: '10px' }}>
-                    {i}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Privacy notice */}
-          {localStatus !== 'CONNECTED' && (
-            <div className="mb-4 p-2.5 text-center"
-              style={{ background: NEU_BASE, boxShadow: NEU_INSET, borderRadius: '14px' }}>
-              <p className="text-[10px] text-[#9B7B5A] leading-tight">
-                Connect to unlock {user.display_name.split(' ')[0]}'s full learner profile
-              </p>
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="space-y-2">
-            {localStatus === 'NONE' && (
-              <button
-                onClick={() => {
-                  onClose()
-                  navigate('/duo', { state: { partner: user } })
-                }}
-                className="w-full py-3.5 flex items-center justify-center gap-2 font-display font-black text-sm text-[#F5E8D0] transition-all active:scale-98 cursor-pointer"
-                style={{
-                  background: 'linear-gradient(135deg,#7E4228,#A0562E)',
-                  boxShadow: '0 4px 20px rgba(126,66,40,0.5), ' + NEU_SHADOW,
-                  borderRadius: '18px',
-                }}>
-                <Video className="w-4 h-4" />
-                Study in Duo
-              </button>
             )}
-            {localStatus === 'REQUEST_SENT' && (
-              <div className="w-full py-3.5 flex items-center justify-center gap-2 text-[#9B7B5A] font-display font-black text-sm"
-                style={{ background: NEU_BASE, boxShadow: NEU_INSET, borderRadius: '18px' }}>
-                <Clock className="w-4 h-4" /> Request Sent
-              </div>
-            )}
-            {localStatus === 'REQUEST_RECEIVED' && (
-              <div className="flex gap-2">
-                <button onClick={handleAccept} disabled={loading}
-                  className="flex-1 py-3.5 flex items-center justify-center gap-2 text-white font-display font-black text-sm transition-all active:scale-98 disabled:opacity-50"
-                  style={{ background: '#15803d', boxShadow: '0 4px 16px rgba(21,128,61,0.4)', borderRadius: '18px' }}>
-                  <Check className="w-4 h-4" /> Accept
+
+            {/* Action Buttons */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2.5">
+                {/* Visit Profile Button */}
+                <button
+                  onClick={() => {
+                    setVisitedUser(user)
+                    setShowProfileModal(true)
+                  }}
+                  className="flex-1 py-3 px-4 rounded-2xl bg-[#FFF9F2] hover:bg-[#F3E7D5] text-[#2D1B11] font-black text-xs border border-[#7E4228]/25 shadow-sm transition-all active:scale-95 cursor-pointer text-center"
+                >
+                  Visit Profile
                 </button>
-                <button onClick={handleDecline} disabled={loading}
-                  className="flex-1 py-3.5 flex items-center justify-center gap-2 text-[#9B7B5A] font-display font-black text-sm transition-all active:scale-98"
-                  style={{ background: NEU_BASE, boxShadow: NEU_SHADOW, borderRadius: '18px' }}>
-                  <UserX className="w-4 h-4" /> Decline
+
+                {/* Connect Button: ONLY visible if a session has been completed with this user and not already connected */}
+                {!isAlreadyConnected && hasHadSession && (
+                  <button
+                    onClick={handleConnect}
+                    disabled={loading || isPending}
+                    className="flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>{isPending ? 'Request Sent' : loading ? 'Connecting...' : 'Connect'}</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Study in Duo Button */}
+              {!isMe && (
+                <button
+                  onClick={handleStudy}
+                  disabled={isBusyOrOffline}
+                  className={`w-full py-3.5 px-4 rounded-2xl font-black text-sm text-white shadow-md flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer ${
+                    isBusyOrOffline
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
+                      : 'bg-[#7E4228] hover:bg-[#6D3821]'
+                  }`}
+                >
+                  <Video className="w-4 h-4 fill-white" />
+                  <span>Study in Duo</span>
                 </button>
-              </div>
-            )}
-            {localStatus === 'CONNECTED' && (
-              <div className="w-full py-3.5 flex items-center justify-center gap-2 text-[#F5E8D0] font-display font-black text-sm"
-                style={{ background: 'linear-gradient(135deg,#7E4228,#C68642)', boxShadow: '0 4px 20px rgba(198,134,66,0.3)', borderRadius: '18px' }}>
-                <UserCheck className="w-4 h-4" /> Connected · Profile Unlocked
-              </div>
-            )}
-            {localStatus === 'DECLINED' && (
-              <div className="w-full py-3.5 flex items-center justify-center gap-2 text-[#6b7280] font-display font-bold text-sm"
-                style={{ background: NEU_BASE, boxShadow: NEU_INSET, borderRadius: '18px' }}>
-                <UserX className="w-4 h-4" /> Request Declined
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Visited Profile Modal */}
+      {showProfileModal && (
+        <LearnerProfileModal
+          user={visitedUser}
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+          onOpenAnotherProfile={(newUser) => setVisitedUser(newUser)}
+        />
+      )}
+    </>
   )
 }
