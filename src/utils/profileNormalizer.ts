@@ -46,6 +46,16 @@ export function normalizeProfile(raw: any): DemoUser | null {
     Boolean(raw.onboarding_completed) ||
     Boolean(config.onboarding_completed)
 
+  const isConnectionsPrivate = Boolean(
+    raw.connections_private ??
+    config.connections_private ??
+    false
+  )
+
+  const isWorldVisible =
+    raw.openworld_visible !== false &&
+    config.openworld_visible !== false
+
   return {
     id: raw.id || `user-${Date.now()}`,
     user_id: raw.id,
@@ -69,18 +79,20 @@ export function normalizeProfile(raw: any): DemoUser | null {
     country: raw.country || config.country || 'Philippines',
     country_code: raw.country_code || config.country_code || 'PH',
     city: raw.city || config.city || 'Manila',
-    online_status: raw.online_status || 'online',
+    online_status: raw.online_status === 'studying' ? 'studying' : (raw.online_status === 'looking' ? 'looking' : (raw.online_status || 'offline')),
     xp: typeof raw.xp === 'number' ? raw.xp : (config.xp || 0),
     streak: typeof raw.streak === 'number' ? raw.streak : (config.streak || 0),
     onboarding_completed: isOnboardingDone,
-    openworld_visible: raw.openworld_visible !== false && config.openworld_visible !== false,
+    openworld_visible: isWorldVisible,
+    connections_private: isConnectionsPrivate,
     created_at: raw.created_at || new Date().toISOString(),
     updated_at: raw.updated_at || new Date().toISOString(),
     otter: resolvedOtter,
     otter_config: {
       ...resolvedOtter,
       ...config,
-      openworld_visible: raw.openworld_visible !== false && config.openworld_visible !== false,
+      connections_private: isConnectionsPrivate,
+      openworld_visible: isWorldVisible,
     },
   } as DemoUser
 }

@@ -414,7 +414,11 @@ export default function OnboardingPage() {
     const finalCity = selectedCity.trim() || 'Manila'
     const countryCode = COUNTRIES.find(c => c.name === finalCountry)?.code || 'PH'
 
+    const isMapVisible = profile?.openworld_visible !== false && profile?.otter_config?.openworld_visible !== false
+    const isConnPrivate = Boolean(profile?.connections_private || profile?.otter_config?.connections_private)
+
     const fullOtterConfig = {
+      ...(profile?.otter_config || {}),
       ...otter,
       onboarding_completed: true,
       school: school.trim(),
@@ -426,10 +430,12 @@ export default function OnboardingPage() {
       preferred_duration: duration,
       accountability_pref: accountability,
       learning_interests: interests,
+      skills: skills,
       country: finalCountry,
       country_code: countryCode,
       city: finalCity,
-      openworld_visible: true,
+      openworld_visible: isMapVisible,
+      connections_private: isConnPrivate,
     }
 
     const finalDisplayName = displayName.trim() || 'Student'
@@ -455,7 +461,8 @@ export default function OnboardingPage() {
       country: finalCountry,
       country_code: countryCode,
       city: finalCity,
-      openworld_visible: true,
+      openworld_visible: isMapVisible,
+      connections_private: isConnPrivate,
       xp: (profile?.xp || 0) + 100, // +100 XP Onboarding bonus!
     }
 
@@ -471,15 +478,31 @@ export default function OnboardingPage() {
           skills: skills,
           category: educationStatus,
           course_grade: `${yearLevel} - ${degreeProgram}${school ? ` (${school})` : ''}`,
+          school: school.trim(),
+          degree_program: degreeProgram.trim(),
+          year_level: yearLevel,
+          study_style: studyStyle,
           country: finalCountry,
           country_code: countryCode,
           city: finalCity,
-          openworld_visible: true,
+          openworld_visible: isMapVisible,
           otter_config: fullOtterConfig,
           xp: updatedProfile.xp,
         }).eq('id', profile.id)
+
         if (error) {
-          console.error('[Onboarding] Error updating profile in Supabase:', error.message)
+          await (supabase.from('profiles') as any).update({
+            display_name: finalDisplayName,
+            interests: interests,
+            skills: skills,
+            category: educationStatus,
+            country: finalCountry,
+            country_code: countryCode,
+            city: finalCity,
+            openworld_visible: isMapVisible,
+            otter_config: fullOtterConfig,
+            xp: updatedProfile.xp,
+          }).eq('id', profile.id)
         }
       } catch (err) {
         console.error('[Onboarding] Exception updating profile:', err)

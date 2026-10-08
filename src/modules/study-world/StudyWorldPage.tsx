@@ -4,6 +4,7 @@ import { LeafletWorldMap } from './components/LeafletWorldMap'
 import { OpenWorldLegend } from './components/OpenWorldLegend'
 import { DiscoveryCard } from './components/DiscoveryCard'
 import { useAuthStore } from '../../store/authStore'
+import { usePresenceStore, getEffectiveOnlineStatus } from '../../store/presenceStore'
 import { fetchOpenWorldLearners } from '../../services/openWorldService'
 import type { OpenWorldUser } from '../../services/openWorldService'
 import type { ClusterGroup } from './components/LeafletWorldMap'
@@ -11,6 +12,7 @@ import { supabase } from '../../lib/supabase'
 
 export const StudyWorldPage: React.FC = () => {
   const { profile } = useAuthStore()
+  const onlineUserIds = usePresenceStore((s) => s.onlineUserIds)
 
   const [learners, setLearners] = useState<OpenWorldUser[]>([])
   const [loading, setLoading] = useState(true)
@@ -70,8 +72,20 @@ export const StudyWorldPage: React.FC = () => {
     setRefreshKey((k) => k + 1)
   }
 
+  // Resolve dynamic live presence for each learner
+  const resolvedLearners = useMemo(() => {
+    return learners.map((l) => {
+      const isOnline = onlineUserIds.has(l.id)
+      const status = getEffectiveOnlineStatus(l, profile?.id, isOnline)
+      return {
+        ...l,
+        online_status: status,
+      }
+    })
+  }, [learners, onlineUserIds, profile?.id])
+
   const filteredLearners = useMemo(() => {
-    let list = learners
+    let list = resolvedLearners
     if (filterStatus !== 'all') {
       list = list.filter((l) => {
         if (filterStatus === 'available') return ['available', 'online'].includes(l.online_status || '')
@@ -82,18 +96,22 @@ export const StudyWorldPage: React.FC = () => {
     }
     if (filterCountry !== 'all') list = list.filter((l) => l.country === filterCountry)
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
+      const q = searchQuery.toLowerCase().trim()
       list = list.filter(
         (l) =>
           l.display_name.toLowerCase().includes(q) ||
+          (l.username || '').toLowerCase().includes(q) ||
           (l.city || '').toLowerCase().includes(q) ||
           (l.country || '').toLowerCase().includes(q) ||
+          (l.school || '').toLowerCase().includes(q) ||
           (l.degree_program || '').toLowerCase().includes(q) ||
-          (l.learning_interests || []).some((i) => i.toLowerCase().includes(q))
+          (l.skills || []).some((s) => s.toLowerCase().includes(q)) ||
+          (l.learning_interests || []).some((i) => i.toLowerCase().includes(q)) ||
+          (l.subjects || []).some((s) => s.toLowerCase().includes(q))
       )
     }
     return list
-  }, [learners, filterStatus, filterCountry, searchQuery])
+  }, [resolvedLearners, filterStatus, filterCountry, searchQuery])
 
   const availableCountries = useMemo(() => {
     const set = new Set<string>()
@@ -381,6 +399,12 @@ export const StudyWorldPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ═══════════════════ APPROXIMATE LOCATION DISCLAIMER ═══════════════════ */}
+      <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 pointer-events-none px-3.5 py-1.5 rounded-full bg-[#FFF9F2]/95 backdrop-blur-md border border-[#7E4228]/20 shadow-md flex items-center gap-1.5 text-[10px] text-[#7E4228] font-bold whitespace-nowrap">
+        <MapPin className="w-3.5 h-3.5 text-[#7E4228]" />
+        <span>Locations are approximate city areas for learner privacy</span>
+      </div>
 
       {/* ═══════════════════ USER CARD MODAL ═══════════════════ */}
       {selectedUser && (

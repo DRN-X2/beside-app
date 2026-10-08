@@ -17,6 +17,7 @@ import type { OpenWorldUser } from '../../../services/openWorldService'
 import { sendConnectionRequest } from '../../../services/openWorldService'
 import { useAuthStore } from '../../../store/authStore'
 import { useConnectionStore, hasCompletedSessionWith } from '../../../store/connectionStore'
+import { usePresenceStore, getEffectiveOnlineStatus } from '../../../store/presenceStore'
 
 interface DiscoveryCardProps {
   user: OpenWorldUser
@@ -46,7 +47,9 @@ export const DiscoveryCard: React.FC<DiscoveryCardProps> = ({ user, onClose, onC
   const hasHadSession = hasCompletedSessionWith(user.id)
   const isPending = connections[user.id]?.status === 'pending_sent' || requestSent
 
-  const isBusyOrOffline = ['studying', 'looking', 'offline'].includes(user.online_status || '')
+  const isTargetOnline = usePresenceStore((s) => s.isUserOnline(user.id))
+  const effectiveStatus = getEffectiveOnlineStatus(user, currentUser?.id, isTargetOnline)
+  const isBusyOrOffline = ['studying', 'looking', 'offline'].includes(effectiveStatus)
 
   const handleConnect = async () => {
     if (!currentUser?.id || isAlreadyConnected || isPending) return
@@ -98,16 +101,16 @@ export const DiscoveryCard: React.FC<DiscoveryCardProps> = ({ user, onClose, onC
           <div className="absolute top-4 left-4 flex items-center gap-1.5 z-10">
             <span
               className={`text-[11px] font-black px-3 py-1 rounded-full capitalize shadow-2xs ${
-                user.online_status === 'studying'
+                effectiveStatus === 'studying'
                   ? 'bg-blue-100 text-blue-800'
-                  : user.online_status === 'looking'
+                  : effectiveStatus === 'looking'
                   ? 'bg-purple-100 text-purple-800'
-                  : user.online_status === 'offline'
+                  : effectiveStatus === 'offline'
                   ? 'bg-gray-100 text-gray-700'
                   : 'bg-emerald-100 text-emerald-800'
               }`}
             >
-              {STATUS_LABEL[user.online_status || 'offline'] || 'Available'}
+              {STATUS_LABEL[effectiveStatus] || 'Available'}
             </span>
             {isAlreadyConnected && (
               <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-black flex items-center gap-1 shadow-2xs">
@@ -161,7 +164,7 @@ export const DiscoveryCard: React.FC<DiscoveryCardProps> = ({ user, onClose, onC
               <div className="mt-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-medium flex items-center justify-center gap-1.5 text-center">
                 <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>
-                  Currently {STATUS_LABEL[user.online_status || 'offline'].toLowerCase()}. You can visit their profile below.
+                  Currently {STATUS_LABEL[effectiveStatus].toLowerCase()}. You can visit their profile below.
                 </span>
               </div>
             )}

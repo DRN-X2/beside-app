@@ -29,6 +29,7 @@ import { CountryFlag } from '../shared/components/CountryFlag'
 import { ConfirmationModal } from '../components/ConfirmationModal'
 import { useAuthStore } from '../store/authStore'
 import { useConnectionStore, hasCompletedSessionWith } from '../store/connectionStore'
+import { usePresenceStore, getEffectiveOnlineStatus } from '../store/presenceStore'
 import { supabase } from '../lib/supabase'
 import { normalizeProfile } from '../utils/profileNormalizer'
 import { fetchUserDashboardStats, type UserDashboardStats } from '../services/xpService'
@@ -163,7 +164,11 @@ function VisitorProfileView({
   const isConnected = connections[targetUserId]?.status === 'accepted'
   const isPending = connections[targetUserId]?.status === 'pending_sent' || requestSent
   const hasHadSession = hasCompletedSessionWith(targetUserId)
-  const isBusyOrOffline = ['studying', 'looking', 'offline'].includes(targetProfile?.online_status || '')
+  const isTargetOnline = usePresenceStore((s) => s.isUserOnline(targetUserId))
+  const effectiveStatus = targetProfile
+    ? getEffectiveOnlineStatus(targetProfile, currentUser?.id, isTargetOnline)
+    : 'offline'
+  const isBusyOrOffline = ['studying', 'looking', 'offline'].includes(effectiveStatus)
 
   const isConnectionsPrivate = Boolean(
     targetProfile?.connections_private ||
@@ -342,9 +347,7 @@ function VisitorProfileView({
                   ) : (
                     <>
                       <Users className="w-3.5 h-3.5 stroke-[2.5]" />
-                      <span>
-                        {otherConnections.length > 0 ? otherConnections.length : (targetProfile.connections_count ?? '0')} connections
-                      </span>
+                      <span>Connections</span>
                     </>
                   )}
                 </button>
@@ -526,7 +529,7 @@ function VisitorProfileView({
             <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
               <span>
-                {targetProfile.display_name} is currently {targetProfile.online_status || 'offline'}. Session invites cannot be sent right now.
+                {targetProfile.display_name} is currently {effectiveStatus}. Session invites cannot be sent right now.
               </span>
             </div>
           )}
@@ -661,7 +664,11 @@ function VisitorProfileView({
                       <button
                         onClick={() => {
                           setShowConnectionsModal(false)
-                          navigate(`/profile/${peer.id}`, { state: { viewUser: peer } })
+                          if (peer.id === currentUser?.id) {
+                            navigate('/profile')
+                          } else {
+                            navigate(`/profile/${peer.id}`, { state: { viewUser: peer } })
+                          }
                         }}
                         className="px-2.5 py-1.5 rounded-xl neu-btn-raised text-[10px] font-black text-[#7E4228] cursor-pointer"
                       >
@@ -691,6 +698,7 @@ export default function ProfilePage() {
   if (isOtherUser && paramUserId) {
     return (
       <VisitorProfileView
+        key={paramUserId}
         targetUserId={paramUserId}
         initialUser={(location.state as any)?.viewUser || (location.state as any)?.user}
       />
@@ -735,16 +743,35 @@ export default function ProfilePage() {
     if (!profile?.id) return
     const next = !connectionsPrivate
     setConnectionsPrivate(next)
+    const updatedOtterConfig = {
+      ...(profile.otter_config || {}),
+      connections_private: next,
+    }
     const updated = {
       ...profile,
       connections_private: next,
-      otter_config: { ...profile.otter_config, connections_private: next },
+      otter_config: updatedOtterConfig,
     }
     setProfile(updated)
-    await supabase.from('profiles').update({
-      connections_private: next,
-      otter_config: updated.otter_config,
-    }).eq('id', profile.id)
+
+    try {
+      const { error } = await supabase.from('profiles').update({
+        connections_private: next,
+        otter_config: updatedOtterConfig,
+      }).eq('id', profile.id)
+
+      if (error) {
+        await supabase.from('profiles').update({
+          otter_config: updatedOtterConfig,
+        }).eq('id', profile.id)
+      }
+    } catch {
+      try {
+        await supabase.from('profiles').update({
+          otter_config: updatedOtterConfig,
+        }).eq('id', profile.id)
+      } catch {}
+    }
   }
 
   const [otter, setOtter] = useState((profile as any)?.otter_config || profile?.otter || { fur: 'brown', eyes: 'happy', glasses: 'none', clothing: 'hoodie', accessory: 'none', background: 'cream' })
@@ -895,7 +922,7 @@ export default function ProfilePage() {
     interests.length === 5 &&
     skills.length === 3
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (!isFormValid) return
     const mergedOtterConfig = {
       ...(profile?.otter_config || {}),
@@ -905,6 +932,12 @@ export default function ProfilePage() {
       school: school.trim(),
       year_level: yearLevel.trim(),
       study_style: studyStyle,
+      country: country.trim(),
+      city: city.trim(),
+      learning_interests: interests,
+      skills: skills,
+      connections_private: connectionsPrivate,
+      openworld_visible: mapVisible,
       onboarding_completed: true,
     }
     const updated = {
@@ -923,25 +956,46 @@ export default function ProfilePage() {
       skills,
       otter,
       otter_config: mergedOtterConfig,
+      connections_private: connectionsPrivate,
+      openworld_visible: mapVisible,
       onboarding_completed: true,
     }
     setProfile(updated)
     setIsEditing(false)
 
     if (profile?.id) {
-      (supabase.from('profiles') as any).update({
-        username: username.trim(),
-        display_name: displayName.trim(),
-        category: category,
-        course_grade: courseGrade.trim(),
-        interests: interests,
-        skills: skills,
-        country: country.trim(),
-        city: city.trim(),
-        otter_config: mergedOtterConfig,
-      }).eq('id', profile.id).then(({ error }: any) => {
-        if (error) console.error('Failed to update profile in database:', error.message)
-      })
+      try {
+        const { error } = await (supabase.from('profiles') as any).update({
+          username: username.trim(),
+          display_name: displayName.trim(),
+          category: category,
+          course_grade: courseGrade.trim(),
+          degree_program: courseGrade.trim(),
+          school: school.trim(),
+          year_level: yearLevel.trim(),
+          study_style: studyStyle,
+          interests: interests,
+          skills: skills,
+          country: country.trim(),
+          city: city.trim(),
+          otter_config: mergedOtterConfig,
+        }).eq('id', profile.id)
+
+        if (error) {
+          await (supabase.from('profiles') as any).update({
+            username: username.trim(),
+            display_name: displayName.trim(),
+            category: category,
+            interests: interests,
+            skills: skills,
+            country: country.trim(),
+            city: city.trim(),
+            otter_config: mergedOtterConfig,
+          }).eq('id', profile.id)
+        }
+      } catch (err: any) {
+        console.error('Failed to update profile in database:', err?.message)
+      }
     }
   }
 
@@ -1043,15 +1097,13 @@ export default function ProfilePage() {
                     })}
                   </div>
 
-                  {/* LinkedIn-style Connections Counter Button */}
+                  {/* LinkedIn-style Connections Pill Button */}
                   <button
                     onClick={() => navigate('/connections')}
                     className="neu-pill bg-[#EFE7E2] text-[#7E4228] px-2.5 py-1 text-[11px] font-black border border-[#7E4228]/20 flex items-center gap-1.5 active:scale-95 transition-all mt-1 hover:bg-[#E5DFD9]"
                   >
                     <Users className="w-3.5 h-3.5 stroke-[2.5]" />
-                    <span>
-                      {connectionCount} {connectionCount === 1 ? 'connection' : 'connections'}
-                    </span>
+                    <span>Connections</span>
                   </button>
                 </div>
               </div>

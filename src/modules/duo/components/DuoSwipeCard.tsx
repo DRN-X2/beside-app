@@ -5,6 +5,7 @@ import { CountryFlag } from '../../../shared/components/CountryFlag'
 import { calculateCompatibility } from '../../../services/compatibility'
 import { useAuthStore } from '../../../store/authStore'
 import { useConnectionStore } from '../../../store/connectionStore'
+import { usePresenceStore, getEffectiveOnlineStatus } from '../../../store/presenceStore'
 import type { DemoUser } from '../../../types'
 
 interface DuoSwipeCardProps {
@@ -29,7 +30,9 @@ export const DuoSwipeCard: React.FC<DuoSwipeCardProps> = ({
   const dragStartRef = useRef({ x: 0, y: 0 })
 
   const isConnected = connections[user.id]?.status === 'accepted'
-  const isBusyOrOffline = ['studying', 'looking', 'offline'].includes(user.online_status || '')
+  const isTargetOnline = usePresenceStore((s) => s.isUserOnline(user.id))
+  const effectiveStatus = getEffectiveOnlineStatus(user, profile?.id, isTargetOnline)
+  const isBusyOrOffline = ['studying', 'looking', 'offline'].includes(effectiveStatus)
 
   const compat = profile
     ? calculateCompatibility(profile, user)
@@ -112,16 +115,16 @@ export const DuoSwipeCard: React.FC<DuoSwipeCardProps> = ({
         <div className="absolute top-4 left-4 flex items-center gap-1.5">
           <span
             className={`text-[11px] font-black px-3 py-1 rounded-full capitalize shadow-2xs ${
-              user.online_status === 'studying'
+              effectiveStatus === 'studying'
                 ? 'bg-blue-100 text-blue-800'
-                : user.online_status === 'looking'
+                : effectiveStatus === 'looking'
                 ? 'bg-purple-100 text-purple-800'
-                : user.online_status === 'offline'
+                : effectiveStatus === 'offline'
                 ? 'bg-gray-100 text-gray-700'
                 : 'bg-emerald-100 text-emerald-800'
             }`}
           >
-            {user.online_status || 'Offline'}
+            {effectiveStatus || 'Offline'}
           </span>
           {isConnected && (
             <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-black flex items-center gap-1 shadow-2xs">
@@ -174,7 +177,7 @@ export const DuoSwipeCard: React.FC<DuoSwipeCardProps> = ({
           {isBusyOrOffline && (
             <div className="mt-3 p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-medium flex items-center justify-center gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-              <span>Currently {user.online_status}. You can visit their profile below.</span>
+              <span>Currently {effectiveStatus}. You can visit their profile below.</span>
             </div>
           )}
         </div>

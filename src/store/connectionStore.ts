@@ -15,6 +15,27 @@ export interface ConnectionEntry {
   goalsCompleted: number
 }
 
+export interface PartnerStats {
+  sessionCount: number
+  totalMinutes: number
+  goalsCompleted: number
+}
+
+export function getStoredPartnerStats(userId: string): Record<string, PartnerStats> {
+  try {
+    const raw = localStorage.getItem(`beside_partner_stats_${userId}`)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+export function saveStoredPartnerStats(userId: string, stats: Record<string, PartnerStats>) {
+  try {
+    localStorage.setItem(`beside_partner_stats_${userId}`, JSON.stringify(stats))
+  } catch {}
+}
+
 export function hasCompletedSessionWith(userId: string): boolean {
   if (!userId) return false
   try {
@@ -25,15 +46,28 @@ export function hasCompletedSessionWith(userId: string): boolean {
   }
 }
 
-export function recordCompletedSessionPartner(userId: string): void {
-  if (!userId) return
+export function recordCompletedSessionPartner(partnerId: string, minutes = 30, goalsCompleted = 0): void {
+  if (!partnerId) return
+  const currentUserId = useAuthStore.getState().user?.id || 'default'
+
   try {
     const past = JSON.parse(localStorage.getItem('beside_completed_sessions') || '[]')
-    if (Array.isArray(past) && !past.includes(userId)) {
-      past.push(userId)
+    if (Array.isArray(past) && !past.includes(partnerId)) {
+      past.push(partnerId)
       localStorage.setItem('beside_completed_sessions', JSON.stringify(past))
     }
   } catch {}
+
+  const allStats = getStoredPartnerStats(currentUserId)
+  const current = allStats[partnerId] || { sessionCount: 0, totalMinutes: 0, goalsCompleted: 0 }
+  allStats[partnerId] = {
+    sessionCount: current.sessionCount + 1,
+    totalMinutes: current.totalMinutes + minutes,
+    goalsCompleted: current.goalsCompleted + goalsCompleted,
+  }
+  saveStoredPartnerStats(currentUserId, allStats)
+
+  useConnectionStore.getState().updateStats(partnerId, minutes, goalsCompleted > 0)
 }
 
 interface ConnectionState {
@@ -109,14 +143,21 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
             ? calculateCompatibility(currentUser, peer)
             : { score: 85, reasons: ['Study peer'], breakdown: { subjects: 85, studyStyle: 85, availability: 85, location: 85, goals: 85 } }
 
+          const partnerStatsMap = getStoredPartnerStats(currentUserId)
+          const pStats = partnerStatsMap[peer.id] || {
+            sessionCount: get().connections[peer.id]?.sessionCount || 0,
+            totalMinutes: get().connections[peer.id]?.totalMinutes || 0,
+            goalsCompleted: get().connections[peer.id]?.goalsCompleted || 0,
+          }
+
           newMap[peer.id] = {
             user: peer,
             status: entryStatus,
             compatibility: compat,
             connectedAt: row.accepted_at || row.created_at,
-            sessionCount: get().connections[peer.id]?.sessionCount || 0,
-            totalMinutes: get().connections[peer.id]?.totalMinutes || 0,
-            goalsCompleted: get().connections[peer.id]?.goalsCompleted || 0,
+            sessionCount: pStats.sessionCount,
+            totalMinutes: pStats.totalMinutes,
+            goalsCompleted: pStats.goalsCompleted,
           }
         }
       }
@@ -257,7 +298,17 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
       .or(`and(requester_id.eq.${partnerId},recipient_id.eq.${currentUser.id}),and(requester_id.eq.${currentUser.id},recipient_id.eq.${partnerId})`)
   },
 
-  addSessionConnection: (user, compat, minutes, goalsCompleted) =>
+  addSessionConnection: (user, compat, minutes, goalsCompleted) => {
+    const currentUserId = useAuthStore.getState().user?.id || 'default'
+    const allStats = getStoredPartnerStats(currentUserId)
+    const current = allStats[user.id] || { sessionCount: 0, totalMinutes: 0, goalsCompleted: 0 }
+    allStats[user.id] = {
+      sessionCount: current.sessionCount + 1,
+      totalMinutes: current.totalMinutes + minutes,
+      goalsCompleted: current.goalsCompleted + goalsCompleted,
+    }
+    saveStoredPartnerStats(currentUserId, allStats)
+
     set((state) => ({
       connections: {
         ...state.connections,
@@ -266,14 +317,25 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
           status: 'accepted',
           compatibility: compat,
           connectedAt: new Date().toISOString(),
-          sessionCount: (state.connections[user.id]?.sessionCount || 0) + 1,
-          totalMinutes: (state.connections[user.id]?.totalMinutes || 0) + minutes,
-          goalsCompleted: (state.connections[user.id]?.goalsCompleted || 0) + goalsCompleted,
+          sessionCount: allStats[user.id].sessionCount,
+          totalMinutes: allStats[user.id].totalMinutes,
+          goalsCompleted: allStats[user.id].goalsCompleted,
         },
       },
-    })),
+    }))
+  },
 
-  updateStats: (userId, minutes, goalCompleted) =>
+  updateStats: (userId, minutes, goalCompleted) => {
+    const currentUserId = useAuthStore.getState().user?.id || 'default'
+    const allStats = getStoredPartnerStats(currentUserId)
+    const current = allStats[userId] || { sessionCount: 0, totalMinutes: 0, goalsCompleted: 0 }
+    allStats[userId] = {
+      sessionCount: current.sessionCount + 1,
+      totalMinutes: current.totalMinutes + minutes,
+      goalsCompleted: current.goalsCompleted + (goalCompleted ? 1 : 0),
+    }
+    saveStoredPartnerStats(currentUserId, allStats)
+
     set((state) => {
       const conn = state.connections[userId]
       if (!conn) return state
@@ -282,13 +344,14 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
           ...state.connections,
           [userId]: {
             ...conn,
-            sessionCount: conn.sessionCount + 1,
-            totalMinutes: conn.totalMinutes + minutes,
-            goalsCompleted: conn.goalsCompleted + (goalCompleted ? 1 : 0),
+            sessionCount: allStats[userId].sessionCount,
+            totalMinutes: allStats[userId].totalMinutes,
+            goalsCompleted: allStats[userId].goalsCompleted,
           },
         },
       }
-    }),
+    })
+  },
 
   getConnection: (userId) => get().connections[userId],
 }))

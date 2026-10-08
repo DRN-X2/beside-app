@@ -17,16 +17,19 @@ const WEIGHTS = {
 function subjectScore(a: any, b: any): { score: number; reason?: string } {
   const aSubjects: string[] = a.subjects || []
   const aInterests: string[] = a.learning_interests || a.interests || []
+  const aSkills: string[] = a.skills || []
   const bSubjects: string[] = b.subjects || []
   const bInterests: string[] = b.learning_interests || b.interests || []
-  const aSet = new Set<string>([...aSubjects, ...aInterests].map(s => s.toLowerCase()))
-  const bSet = new Set<string>([...bSubjects, ...bInterests].map(s => s.toLowerCase()))
+  const bSkills: string[] = b.skills || []
+
+  const aSet = new Set<string>([...aSubjects, ...aInterests, ...aSkills].map(s => s.toLowerCase()))
+  const bSet = new Set<string>([...bSubjects, ...bInterests, ...bSkills].map(s => s.toLowerCase()))
   const overlap = [...aSet].filter(s => bSet.has(s))
 
   if (overlap.length === 0) return { score: 0 }
-  if (overlap.length === 1) return { score: 60, reason: `Both study ${capitalize(overlap[0])}` }
-  if (overlap.length === 2) return { score: 80, reason: `Shared subjects: ${overlap.slice(0,2).map(capitalize).join(' & ')}` }
-  return { score: 100, reason: `${overlap.length} shared subjects including ${capitalize(overlap[0])}` }
+  if (overlap.length === 1) return { score: 60, reason: `Both share ${capitalize(overlap[0])}` }
+  if (overlap.length === 2) return { score: 80, reason: `Shared interests & skills: ${overlap.slice(0,2).map(capitalize).join(' & ')}` }
+  return { score: 100, reason: `${overlap.length} shared subjects & skills including ${capitalize(overlap[0])}` }
 }
 
 function studyStyleScore(a: DemoUser, b: DemoUser): { score: number; reason?: string } {

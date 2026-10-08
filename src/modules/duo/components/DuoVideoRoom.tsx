@@ -667,7 +667,7 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
                 <>
                   <button
                     onClick={async () => {
-                      recordCompletedSessionPartner(partner.id)
+                      recordCompletedSessionPartner(partner.id, duration, completedCount)
                       await useSessionStore.getState().endSessionDB()
                       setShowEndModal(false)
                       onEndSession()
@@ -687,7 +687,7 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
                 <>
                   <button
                     onClick={async () => {
-                      recordCompletedSessionPartner(partner.id)
+                      recordCompletedSessionPartner(partner.id, duration, completedCount)
                       const compat = calculateCompatibility(currentUser, partner)
                       addSessionConnection(partner, compat, duration, completedCount)
                       await sendRequestDB(partner)
@@ -703,7 +703,7 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
 
                   <button
                     onClick={async () => {
-                      recordCompletedSessionPartner(partner.id)
+                      recordCompletedSessionPartner(partner.id, duration, completedCount)
                       await useSessionStore.getState().endSessionDB()
                       setShowEndModal(false)
                       onEndSession()

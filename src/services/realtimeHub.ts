@@ -6,10 +6,12 @@ import { useSessionStore } from '../store/sessionStore'
 import type { DemoUser } from '../types'
 import { normalizeProfile } from '../utils/profileNormalizer'
 import { awardXP } from './xpService'
+import { usePresenceStore } from '../store/presenceStore'
 
 let notificationsChannel: ReturnType<typeof supabase.channel> | null = null
 let connectionsChannel: ReturnType<typeof supabase.channel> | null = null
 let sessionChannel: ReturnType<typeof supabase.channel> | null = null
+let presenceChannel: ReturnType<typeof supabase.channel> | null = null
 let activeSubscribedSessionId: string | null = null
 
 const eventListeners: Record<string, Set<(payload: any) => void>> = {}
@@ -73,6 +75,9 @@ export function getOrCreateHubChannel() {
   if (!currentUserId) return null
 
   if (notificationsChannel) return notificationsChannel
+
+  // 0. Initialize real-time online presence tracking
+  initOnlinePresence(currentUserId)
 
   // 1. Fetch initial notifications & connections from DB
   fetchInitialNotifications(currentUserId)
@@ -289,6 +294,61 @@ export function unsubscribeFromActiveSession() {
   }
 }
 
+export function initOnlinePresence(userId: string) {
+  if (presenceChannel) return presenceChannel
+
+  presenceChannel = supabase.channel('online-presence', {
+    config: {
+      presence: { key: userId },
+    },
+  })
+
+  presenceChannel
+    .on('presence', { event: 'sync' }, () => {
+      const state = presenceChannel?.presenceState() || {}
+      const onlineIds = new Set<string>(Object.keys(state))
+      onlineIds.add(userId)
+      usePresenceStore.getState().setOnlineUsers(onlineIds)
+    })
+    .on('presence', { event: 'join' }, ({ key }) => {
+      if (key) {
+        usePresenceStore.getState().addOnlineUser(key)
+      }
+    })
+    .on('presence', { event: 'leave' }, ({ key }) => {
+      if (key && key !== userId) {
+        usePresenceStore.getState().removeOnlineUser(key)
+      }
+    })
+    .subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await presenceChannel?.track({
+          user_id: userId,
+          online_at: new Date().toISOString(),
+        })
+      }
+    })
+
+  const handleBeforeUnload = () => {
+    try {
+      presenceChannel?.untrack()
+    } catch {}
+  }
+  window.addEventListener('beforeunload', handleBeforeUnload)
+
+  return presenceChannel
+}
+
+export function cleanupPresence() {
+  if (presenceChannel) {
+    try {
+      presenceChannel.untrack()
+      supabase.removeChannel(presenceChannel)
+    } catch {}
+    presenceChannel = null
+  }
+}
+
 export function cleanupRealtimeHub() {
   if (notificationsChannel) {
     supabase.removeChannel(notificationsChannel)
@@ -298,6 +358,7 @@ export function cleanupRealtimeHub() {
     supabase.removeChannel(connectionsChannel)
     connectionsChannel = null
   }
+  cleanupPresence()
   unsubscribeFromActiveSession()
 }
 

@@ -57,6 +57,7 @@ export interface Profile {
   streak?: number
   onboarding_completed?: boolean
   openworld_visible?: boolean
+  connections_private?: boolean
   otter_config?: any
   created_at: string
   updated_at: string
