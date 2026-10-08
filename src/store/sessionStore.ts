@@ -47,15 +47,41 @@ interface SessionState {
   setEndsAt: (endsAt: Date) => void
 }
 
+const loadPersistedSession = () => {
+  try {
+    const raw = localStorage.getItem('beside_active_session')
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    const endsAt = new Date(parsed.endsAt)
+    if (endsAt.getTime() > Date.now()) {
+      return {
+        sessionId: parsed.sessionId as string,
+        isActive: true,
+        partner: parsed.partner as DemoUser,
+        duration: parsed.duration as SessionDuration,
+        startedAt: new Date(parsed.startedAt),
+        endsAt,
+        timeLeft: Math.max(0, Math.floor((endsAt.getTime() - Date.now()) / 1000)),
+      }
+    }
+    localStorage.removeItem('beside_active_session')
+    return null
+  } catch {
+    return null
+  }
+}
+
+const initialPersisted = loadPersistedSession()
+
 export const useSessionStore = create<SessionState>()((set, get) => ({
-  sessionId: null,
-  isActive: false,
-  partner: null,
+  sessionId: initialPersisted?.sessionId || null,
+  isActive: initialPersisted?.isActive || false,
+  partner: initialPersisted?.partner || null,
   subject: '',
-  duration: 30,
-  timeLeft: 30 * 60,
-  startedAt: null,
-  endsAt: null,
+  duration: initialPersisted?.duration || 30,
+  timeLeft: initialPersisted?.timeLeft || 30 * 60,
+  startedAt: initialPersisted?.startedAt || null,
+  endsAt: initialPersisted?.endsAt || null,
   objectives: [],
   messages: [],
   isCompleted: false,
@@ -64,19 +90,34 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
 
   setSquadActive: (isSquadActive) => set({ isSquadActive }),
 
-  startSessionLocally: (sessionId, partner, duration, startedAt, endsAt) => set({
-    sessionId,
-    isActive: true,
-    partner,
-    duration,
-    startedAt,
-    endsAt,
-    timeLeft: Math.max(0, Math.floor((endsAt.getTime() - Date.now()) / 1000)),
-    objectives: [],
-    messages: [],
-    isCompleted: false,
-    completionStatus: null,
-  }),
+  startSessionLocally: (sessionId, partner, duration, startedAt, endsAt) => {
+    try {
+      localStorage.setItem(
+        'beside_active_session',
+        JSON.stringify({
+          sessionId,
+          partner,
+          duration,
+          startedAt: startedAt.toISOString(),
+          endsAt: endsAt.toISOString(),
+        })
+      )
+    } catch {}
+
+    set({
+      sessionId,
+      isActive: true,
+      partner,
+      duration,
+      startedAt,
+      endsAt,
+      timeLeft: Math.max(0, Math.floor((endsAt.getTime() - Date.now()) / 1000)),
+      objectives: [],
+      messages: [],
+      isCompleted: false,
+      completionStatus: null,
+    })
+  },
 
   syncSessionData: (data) => set((state) => ({ ...state, ...data })),
 
@@ -206,18 +247,23 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
     completionStatus: status,
   }),
 
-  endSession: () => set({
-    sessionId: null,
-    isActive: false,
-    partner: null,
-    subject: '',
-    timeLeft: 30 * 60,
-    startedAt: null,
-    endsAt: null,
-    messages: [],
-    isCompleted: false,
-    completionStatus: null,
-  }),
+  endSession: () => {
+    try {
+      localStorage.removeItem('beside_active_session')
+    } catch {}
+    set({
+      sessionId: null,
+      isActive: false,
+      partner: null,
+      subject: '',
+      timeLeft: 30 * 60,
+      startedAt: null,
+      endsAt: null,
+      messages: [],
+      isCompleted: false,
+      completionStatus: null,
+    })
+  },
 
   endSessionDB: async () => {
     const { sessionId } = get()

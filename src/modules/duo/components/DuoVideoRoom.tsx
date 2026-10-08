@@ -8,19 +8,26 @@ import { useSessionStore } from '../../../store/sessionStore'
 import { useAuthStore } from '../../../store/authStore'
 import { useConnectionStore } from '../../../store/connectionStore'
 import { calculateCompatibility } from '../../../services/compatibility'
+import { WebRTCConnection } from '../../../services/webrtcService'
 import { supabase } from '../../../lib/supabase'
-import { CheckCircle2, Clock, VideoOff, MicOff, Mic, Sparkles, Check, Target } from 'lucide-react'
+import { CheckCircle2, Clock, VideoOff, MicOff, Mic, Sparkles, Check, Target, AlertCircle } from 'lucide-react'
 import type { DemoUser, SessionDuration } from '../../../types'
 
 interface DuoVideoRoomProps {
   partner: DemoUser
   duration: SessionDuration
+  initialLocalStream?: MediaStream | null
+  initialCameraOff?: boolean
+  initialMuted?: boolean
   onEndSession: () => void
 }
 
 export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
   partner,
   duration,
+  initialLocalStream = null,
+  initialCameraOff = false,
+  initialMuted = false,
   onEndSession,
 }) => {
   const navigate = useNavigate()
@@ -44,21 +51,25 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
   } = useSessionStore()
 
   // Video and Audio controls
-  const [isMuted, setIsMuted] = useState(false)
-  const [isCameraOff, setIsCameraOff] = useState(false)
+  const [isMuted, setIsMuted] = useState(initialMuted)
+  const [isCameraOff, setIsCameraOff] = useState(initialCameraOff)
   const [isPartnerCameraOff, setIsPartnerCameraOff] = useState(false)
   const [isPartnerMuted, setIsPartnerMuted] = useState(false)
   const [sharedView, setSharedView] = useState<'video' | 'quiz' | 'chat'>('video')
   const [showEndModal, setShowEndModal] = useState(false)
   const [showObjectives, setShowObjectives] = useState(false)
 
-  // Local media stream for user webcam
+  // Real WebRTC Streams & Refs
   const localVideoRef = useRef<HTMLVideoElement>(null)
-  const peerCanvasRef = useRef<HTMLCanvasElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const [hasMediaPermission, setHasMediaPermission] = useState(false)
+  const remoteVideoRef = useRef<HTMLVideoElement>(null)
+  const remoteAudioRef = useRef<HTMLAudioElement>(null)
+  const streamRef = useRef<MediaStream | null>(initialLocalStream)
+  const rtcRef = useRef<WebRTCConnection | null>(null)
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
+  const [hasMediaPermission, setHasMediaPermission] = useState(!!initialLocalStream)
+  const [partnerDisconnectedNotice, setPartnerDisconnectedNotice] = useState(false)
 
-  // Fetch connections to know whether peer is already an accepted connection
+  // Fetch connections for checking already-connected peers
   useEffect(() => {
     if (currentUser?.id) {
       fetchConnections(currentUser.id)
@@ -73,26 +84,58 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
     return () => clearInterval(timer)
   }, [tick])
 
-  // Real webcam feed for user: acquired ONCE and persistent in streamRef
+  // Setup local webcam: reuse initialLocalStream or acquire new one with audio fallback
   useEffect(() => {
     let isMounted = true
 
     async function initCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
+      if (streamRef.current) {
+        // Stream passed from Lobby
+        setHasMediaPermission(true)
+        if (localVideoRef.current && streamRef.current.getVideoTracks().length > 0) {
+          localVideoRef.current.srcObject = streamRef.current
+          localVideoRef.current.play().catch(() => {})
+        }
+        streamRef.current.getVideoTracks().forEach((t) => {
+          t.enabled = !isCameraOff
         })
+        streamRef.current.getAudioTracks().forEach((t) => {
+          t.enabled = !isMuted
+        })
+        rtcRef.current?.updateLocalStream(streamRef.current)
+        return
+      }
+
+      try {
+        let stream: MediaStream | null = null
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          })
+        } catch (vErr) {
+          console.warn('[DuoVideoRoom] Camera hardware in use or unavailable, fallback to audio:', vErr)
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          setIsCameraOff(true)
+        }
+
         if (!isMounted) {
           stream.getTracks().forEach((track) => track.stop())
           return
         }
         streamRef.current = stream
         setHasMediaPermission(true)
-        if (localVideoRef.current) {
+        if (localVideoRef.current && stream.getVideoTracks().length > 0) {
           localVideoRef.current.srcObject = stream
           localVideoRef.current.play().catch(() => {})
         }
+        stream.getVideoTracks().forEach((t) => {
+          t.enabled = !isCameraOff
+        })
+        stream.getAudioTracks().forEach((t) => {
+          t.enabled = !isMuted
+        })
+        rtcRef.current?.updateLocalStream(stream)
       } catch (err) {
         console.warn('[DuoVideoRoom] Media permission issue:', err)
         setHasMediaPermission(false)
@@ -116,12 +159,12 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
       streamRef.current.getVideoTracks().forEach((t) => {
         t.enabled = !isCameraOff
       })
-      if (!isCameraOff && localVideoRef.current) {
+      if (!isCameraOff && localVideoRef.current && streamRef.current.getVideoTracks().length > 0) {
         localVideoRef.current.srcObject = streamRef.current
         localVideoRef.current.play().catch(() => {})
       }
     }
-  }, [isCameraOff])
+  }, [isCameraOff, hasMediaPermission])
 
   useEffect(() => {
     if (streamRef.current) {
@@ -131,84 +174,92 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
     }
   }, [isMuted])
 
-  // Real-Time Peer Media State Synchronization via Supabase Realtime Broadcast
-  const roomId = sessionId || `room_${[currentUser.id, partner.id].sort().join('_')}`
+  // Setup real WebRTC P2P connection with compact deterministic room ID
+  const callRoomId = [currentUser.id, partner.id]
+    .map((id) => id.replace(/-/g, '').slice(0, 8))
+    .sort()
+    .join('_')
 
   useEffect(() => {
-    const channel = supabase.channel(`media_sync_${roomId}`)
-      .on('broadcast', { event: 'media_state_change' }, ({ payload }) => {
-        if (payload && payload.userId === partner.id) {
-          if (typeof payload.isCameraOff === 'boolean') {
-            setIsPartnerCameraOff(payload.isCameraOff)
-          }
-          if (typeof payload.isMuted === 'boolean') {
-            setIsPartnerMuted(payload.isMuted)
-          }
+    if (!currentUser?.id || !partner?.id) return
+
+    const rtc = new WebRTCConnection({
+      channelId: callRoomId,
+      userId: currentUser.id,
+      peerId: partner.id,
+      localStream: streamRef.current,
+      onRemoteStream: (stream) => {
+        setRemoteStream(stream)
+        setPartnerDisconnectedNotice(false)
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = stream
+          remoteVideoRef.current.play().catch(() => {})
         }
-      })
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [roomId, partner.id])
-
-  const broadcastMediaState = (cameraOff: boolean, muted: boolean) => {
-    const channel = supabase.channel(`media_sync_${roomId}`)
-    channel.send({
-      type: 'broadcast',
-      event: 'media_state_change',
-      payload: {
-        userId: currentUser.id,
-        isCameraOff: cameraOff,
-        isMuted: muted,
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = stream
+          remoteAudioRef.current.play().catch(() => {})
+        }
+      },
+      onPeerActive: () => {
+        setPartnerDisconnectedNotice(false)
+      },
+      onPeerLeft: () => {
+        setPartnerDisconnectedNotice(true)
+      },
+      onMediaStateChange: (state) => {
+        setIsPartnerCameraOff(state.isCameraOff)
+        setIsPartnerMuted(state.isMuted)
+      },
+      onConnectionStateChange: (state) => {
+        if (state === 'connected') {
+          setPartnerDisconnectedNotice(false)
+        } else if (state === 'disconnected' || state === 'failed') {
+          setPartnerDisconnectedNotice(true)
+        }
       },
     })
-  }
+
+    rtcRef.current = rtc
+
+    return () => {
+      rtc.destroy()
+      rtcRef.current = null
+    }
+  }, [callRoomId, currentUser.id, partner.id])
+
+  // Attach remote stream whenever remote video ref or remote stream updates
+  useEffect(() => {
+    if (remoteStream) {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStream
+        remoteVideoRef.current.play().catch(() => {})
+      }
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = remoteStream
+        remoteAudioRef.current.play().catch(() => {
+          const unlock = () => {
+            remoteAudioRef.current?.play().catch(() => {})
+            window.removeEventListener('click', unlock)
+            window.removeEventListener('touchstart', unlock)
+          }
+          window.addEventListener('click', unlock, { once: true })
+          window.addEventListener('touchstart', unlock, { once: true })
+        })
+      }
+    }
+  }, [remoteStream, isPartnerCameraOff])
 
   const handleToggleCamera = () => {
     const next = !isCameraOff
     setIsCameraOff(next)
-    broadcastMediaState(next, isMuted)
+    rtcRef.current?.sendMediaState(next, isMuted)
   }
 
   const handleToggleMic = () => {
     const next = !isMuted
     setIsMuted(next)
-    broadcastMediaState(isCameraOff, next)
+    rtcRef.current?.sendMediaState(isCameraOff, next)
   }
-
-  // Simulated ambient lighting for partner video when camera is on
-  useEffect(() => {
-    const canvas = peerCanvasRef.current
-    if (!canvas || isPartnerCameraOff) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    let animId: number
-    let frame = 0
-    const render = () => {
-      frame++
-      const width = canvas.width
-      const height = canvas.height
-
-      const grad = ctx.createLinearGradient(0, 0, width, height)
-      const shift = Math.sin(frame * 0.02) * 15
-      grad.addColorStop(0, `rgb(${45 + shift}, ${36 + shift}, ${28 + shift})`)
-      grad.addColorStop(1, `rgb(${30 - shift * 0.5}, ${24 - shift * 0.5}, ${18 - shift * 0.5})`)
-      ctx.fillStyle = grad
-      ctx.fillRect(0, 0, width, height)
-
-      ctx.fillStyle = 'rgba(255, 230, 200, 0.12)'
-      ctx.beginPath()
-      ctx.arc(width * 0.75, height * 0.35, 90 + Math.sin(frame * 0.04) * 6, 0, Math.PI * 2)
-      ctx.fill()
-
-      animId = requestAnimationFrame(render)
-    }
-    render()
-    return () => cancelAnimationFrame(animId)
-  }, [isPartnerCameraOff])
 
   // Format time remaining MM:SS
   const mins = Math.floor(timeLeft / 60)
@@ -222,6 +273,17 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
 
   return (
     <div className="relative w-full h-[100dvh] bg-[#FAF2E6] flex flex-col justify-between p-3 max-w-md mx-auto select-none overflow-hidden text-[#2D1B11] font-sans">
+      {/* Hidden Audio element for playing partner audio even when their camera is off */}
+      <audio ref={remoteAudioRef} autoPlay playsInline />
+
+      {/* Disconnection Reconnection Notice Banner */}
+      {partnerDisconnectedNotice && (
+        <div className="absolute top-16 inset-x-4 z-40 bg-amber-500/95 text-white px-3.5 py-2 rounded-2xl shadow-xl flex items-center justify-center gap-2 text-xs font-bold animate-pulse">
+          <AlertCircle className="w-4 h-4" />
+          <span>Partner disconnected · Waiting for reconnection…</span>
+        </div>
+      )}
+
       {/* Top Session Status Bar - Clean Beside Cream Dock */}
       <div className="flex items-center justify-between px-3.5 py-2 z-30 bg-white/95 border border-[#E8DACB] rounded-2xl shadow-sm mb-2 backdrop-blur-md">
         <div className="flex items-center gap-2">
@@ -276,15 +338,22 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
             {/* Top Video Tile: Peer Participant (Maria / User2) */}
             <div className="relative flex-1 w-full bg-white border border-[#E8DACB] rounded-3xl overflow-hidden flex items-center justify-center shadow-md transition-all duration-300">
               {!isPartnerCameraOff ? (
-                /* CAMERA OPEN: Live video feed */
-                <>
-                  <div className="relative w-full h-full flex items-center justify-center bg-[#251811]">
-                    <canvas ref={peerCanvasRef} width={400} height={300} className="w-full h-full object-cover" />
-                    <div className="absolute top-3 left-3 bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 shadow-md">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      <span>Live Video</span>
+                /* CAMERA OPEN: Real WebRTC remote video feed! */
+                <div className="relative w-full h-full flex items-center justify-center bg-[#251811]">
+                  <video
+                    ref={remoteVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${remoteStream ? 'block' : 'hidden'}`}
+                  />
+                  {!remoteStream && (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-[#251811] text-[#A8826D] p-4 text-center">
+                      <div className="w-8 h-8 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin mb-2" />
+                      <span className="text-[11px] font-bold text-emerald-400">Connecting P2P video & audio…</span>
+                      <span className="text-[9px] text-[#A8826D] mt-0.5">Please wait while your partner joins</span>
                     </div>
-                  </div>
+                  )}
 
                   {/* Corner Badge when camera is OPEN */}
                   <div className="absolute bottom-3 left-3 z-20 flex items-center gap-2 animate-fade-in bg-black/50 backdrop-blur-md px-2.5 py-1.5 rounded-2xl border border-white/10">
@@ -298,7 +367,14 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
                       {partner.display_name}
                     </span>
                   </div>
-                </>
+
+                  {remoteStream && (
+                    <div className="absolute top-3 left-3 bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 shadow-md">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Live Video</span>
+                    </div>
+                  )}
+                </div>
               ) : (
                 /* CAMERA CLOSED: Google Meet Centered Avatar on Warm Background */
                 <div className="w-full h-full bg-[#F5EDE3] flex flex-col items-center justify-center p-4 animate-fade-in">
@@ -435,8 +511,18 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
             {/* Bottom Mini Video Tiles */}
             <div className="flex-[1.2] flex gap-2 min-h-0">
               <div className="relative flex-1 bg-white border border-[#E8DACB] rounded-2xl overflow-hidden flex items-center justify-center p-2 shadow-sm">
-                {!isPartnerCameraOff ? (
-                  <canvas ref={peerCanvasRef} width={200} height={150} className="w-full h-full object-cover rounded-xl" />
+                {!isPartnerCameraOff && remoteStream ? (
+                  <video
+                    ref={(el) => {
+                      if (el && remoteStream) {
+                        el.srcObject = remoteStream
+                        el.play().catch(() => {})
+                      }
+                    }}
+                    autoPlay
+                    playsInline
+                    className="w-full h-full object-cover rounded-xl"
+                  />
                 ) : (
                   <OtterAvatarWithBadge
                     config={partner.otter}

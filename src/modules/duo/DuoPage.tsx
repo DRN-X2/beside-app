@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Video, ArrowLeft, Loader2, AlertCircle } from 'lucide-react'
 import { DuoVideoRoom } from './components/DuoVideoRoom'
+import { DuoPreJoinLobby } from './components/DuoPreJoinLobby'
 import { OtterAvatarWithBadge } from '../../shared/components/OtterAvatarWithBadge'
 import { useSessionStore } from '../../store/sessionStore'
 import { useAuthStore } from '../../store/authStore'
@@ -143,17 +144,42 @@ export const DuoPage: React.FC = () => {
     setCreatedSessionId(null)
   }
 
+  const [hasJoinedFromLobby, setHasJoinedFromLobby] = useState(false)
+  const [lobbySettings, setLobbySettings] = useState<{
+    stream: MediaStream | null
+    isCameraOff: boolean
+    isMuted: boolean
+  } | null>(null)
+
   const handleEndCall = async () => {
     await endSessionDB()
     navigate('/history')
   }
 
-  // If in active session, render the Duo video room
+  // If in active session, render Lobby first, then Duo video room
   if (isActive && partner) {
+    if (!hasJoinedFromLobby) {
+      return (
+        <DuoPreJoinLobby
+          partner={partner}
+          duration={selectedDuration}
+          currentUser={currentUser}
+          onJoin={(settings) => {
+            setLobbySettings(settings)
+            setHasJoinedFromLobby(true)
+          }}
+          onBack={handleEndCall}
+        />
+      )
+    }
+
     return (
       <DuoVideoRoom
         partner={partner}
         duration={selectedDuration}
+        initialLocalStream={lobbySettings?.stream}
+        initialCameraOff={lobbySettings?.isCameraOff}
+        initialMuted={lobbySettings?.isMuted}
         onEndSession={handleEndCall}
       />
     )
