@@ -21,10 +21,42 @@ export interface PartnerStats {
   goalsCompleted: number
 }
 
-export function getStoredPartnerStats(userId: string): Record<string, PartnerStats> {
+export function getStoredPartnerStats(userId?: string): Record<string, PartnerStats> {
   try {
-    const raw = localStorage.getItem(`beside_partner_stats_${userId}`)
-    return raw ? JSON.parse(raw) : {}
+    const auth = useAuthStore.getState()
+    const pId = auth.profile?.id
+    const uId = auth.user?.id
+    const targetId = userId || pId || uId || 'default'
+
+    const keys = Array.from(
+      new Set([
+        `beside_partner_stats_${targetId}`,
+        pId ? `beside_partner_stats_${pId}` : '',
+        uId ? `beside_partner_stats_${uId}` : '',
+        'beside_partner_stats_default',
+      ].filter(Boolean))
+    )
+
+    const merged: Record<string, PartnerStats> = {}
+    for (const key of keys) {
+      const raw = localStorage.getItem(key)
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw)
+          for (const [pid, st] of Object.entries(parsed as Record<string, PartnerStats>)) {
+            if (!merged[pid]) {
+              merged[pid] = { sessionCount: 0, totalMinutes: 0, goalsCompleted: 0 }
+            }
+            merged[pid] = {
+              sessionCount: Math.max(merged[pid].sessionCount, st.sessionCount || 0),
+              totalMinutes: Math.max(merged[pid].totalMinutes, st.totalMinutes || 0),
+              goalsCompleted: Math.max(merged[pid].goalsCompleted, st.goalsCompleted || 0),
+            }
+          }
+        } catch {}
+      }
+    }
+    return merged
   } catch {
     return {}
   }
@@ -32,7 +64,22 @@ export function getStoredPartnerStats(userId: string): Record<string, PartnerSta
 
 export function saveStoredPartnerStats(userId: string, stats: Record<string, PartnerStats>) {
   try {
-    localStorage.setItem(`beside_partner_stats_${userId}`, JSON.stringify(stats))
+    const auth = useAuthStore.getState()
+    const pId = auth.profile?.id
+    const uId = auth.user?.id
+    const keys = Array.from(
+      new Set([
+        userId ? `beside_partner_stats_${userId}` : '',
+        pId ? `beside_partner_stats_${pId}` : '',
+        uId ? `beside_partner_stats_${uId}` : '',
+        'beside_partner_stats_default',
+      ].filter(Boolean))
+    )
+
+    const json = JSON.stringify(stats)
+    for (const key of keys) {
+      localStorage.setItem(key, json)
+    }
   } catch {}
 }
 
@@ -48,7 +95,8 @@ export function hasCompletedSessionWith(userId: string): boolean {
 
 export function recordCompletedSessionPartner(partnerId: string, minutes = 30, goalsCompleted = 0): void {
   if (!partnerId) return
-  const currentUserId = useAuthStore.getState().user?.id || 'default'
+  const auth = useAuthStore.getState()
+  const currentUserId = auth.profile?.id || auth.user?.id || 'default'
 
   try {
     const past = JSON.parse(localStorage.getItem('beside_completed_sessions') || '[]')
@@ -144,10 +192,34 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
             : { score: 85, reasons: ['Study peer'], breakdown: { subjects: 85, studyStyle: 85, availability: 85, location: 85, goals: 85 } }
 
           const partnerStatsMap = getStoredPartnerStats(currentUserId)
-          const pStats = partnerStatsMap[peer.id] || {
+          let pStats = partnerStatsMap[peer.id] || {
             sessionCount: get().connections[peer.id]?.sessionCount || 0,
             totalMinutes: get().connections[peer.id]?.totalMinutes || 0,
             goalsCompleted: get().connections[peer.id]?.goalsCompleted || 0,
+          }
+
+          // Auto-heal: If stored stats are 0 but user has completed study sessions in database
+          if (pStats.sessionCount === 0 && entryStatus === 'accepted') {
+            try {
+              const { data: dbSessions } = await supabase
+                .from('sessions')
+                .select('id, duration_minutes, status')
+                .eq('status', 'completed')
+
+              if (dbSessions && dbSessions.length > 0) {
+                const acceptedRows = (data as any[]).filter((r: any) => r.status === 'accepted')
+                if (acceptedRows.length === 1) {
+                  const totalDbMinutes = dbSessions.reduce((acc: number, s: any) => acc + (s.duration_minutes || 30), 0)
+                  pStats = {
+                    sessionCount: dbSessions.length,
+                    totalMinutes: totalDbMinutes,
+                    goalsCompleted: 1,
+                  }
+                  partnerStatsMap[peer.id] = pStats
+                  saveStoredPartnerStats(currentUserId, partnerStatsMap)
+                }
+              }
+            } catch {}
           }
 
           newMap[peer.id] = {
@@ -299,7 +371,8 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
   },
 
   addSessionConnection: (user, compat, minutes, goalsCompleted) => {
-    const currentUserId = useAuthStore.getState().user?.id || 'default'
+    const auth = useAuthStore.getState()
+    const currentUserId = auth.profile?.id || auth.user?.id || 'default'
     const allStats = getStoredPartnerStats(currentUserId)
     const current = allStats[user.id] || { sessionCount: 0, totalMinutes: 0, goalsCompleted: 0 }
     allStats[user.id] = {
@@ -326,7 +399,8 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
   },
 
   updateStats: (userId, minutes, goalCompleted) => {
-    const currentUserId = useAuthStore.getState().user?.id || 'default'
+    const auth = useAuthStore.getState()
+    const currentUserId = auth.profile?.id || auth.user?.id || 'default'
     const allStats = getStoredPartnerStats(currentUserId)
     const current = allStats[userId] || { sessionCount: 0, totalMinutes: 0, goalsCompleted: 0 }
     allStats[userId] = {

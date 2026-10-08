@@ -86,6 +86,13 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
     return () => clearInterval(timer)
   }, [tick])
 
+  // Automatically prompt session completion dialog when timer runs out
+  useEffect(() => {
+    if (timeLeft === 0) {
+      setShowEndModal(true)
+    }
+  }, [timeLeft])
+
   // Setup local webcam: reuse initialLocalStream or acquire new one with audio fallback
   useEffect(() => {
     let isMounted = true

@@ -2,13 +2,13 @@ import React from 'react'
 import { ArrowLeft, Clock, Target, Users, ChevronRight, BookOpen } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import OtterAvatar from '../components/OtterAvatar'
-import { useConnectionStore } from '../store/connectionStore'
+import { useConnectionStore, getStoredPartnerStats, saveStoredPartnerStats } from '../store/connectionStore'
 import { useAuthStore } from '../store/authStore'
 import { getRelationshipLevel, getRelationshipColor, getRelationshipProgress, getNextLevelInfo } from '../services/relationships'
 import { fetchUserDashboardStats, type UserDashboardStats } from '../services/xpService'
 
 export default function StudyHistoryPage() {
-  const { connections } = useConnectionStore()
+  const { connections, fetchConnections } = useConnectionStore()
   const { profile } = useAuthStore()
   const navigate = useNavigate()
   const [stats, setStats] = React.useState<UserDashboardStats>({
@@ -24,8 +24,28 @@ export default function StudyHistoryPage() {
   React.useEffect(() => {
     if (profile?.id) {
       fetchUserDashboardStats(profile.id).then(setStats)
+      fetchConnections(profile.id)
     }
-  }, [profile?.id])
+  }, [profile?.id, fetchConnections])
+
+  // Auto-sync single partner stats with overall completed sessions if local session count was 0
+  React.useEffect(() => {
+    if (profile?.id && stats.sessionsCount > 0) {
+      const acceptedList = Object.values(connections).filter((c) => c.status === 'accepted')
+      if (acceptedList.length === 1) {
+        const p = acceptedList[0]
+        if (p.sessionCount < stats.sessionsCount) {
+          const stored = getStoredPartnerStats(profile.id)
+          stored[p.user.id] = {
+            sessionCount: stats.sessionsCount,
+            totalMinutes: stats.totalMinutes,
+            goalsCompleted: stats.goalsCompleted,
+          }
+          saveStoredPartnerStats(profile.id, stored)
+        }
+      }
+    }
+  }, [connections, stats, profile?.id])
 
   if (!profile) return null
 
@@ -99,9 +119,22 @@ export default function StudyHistoryPage() {
             Study History ({partners.length})
           </h2>
           {partners.map((conn) => {
-            const level = getRelationshipLevel(conn.sessionCount)
-            const progress = getRelationshipProgress(conn.sessionCount)
-            const next = getNextLevelInfo(conn.sessionCount)
+            const effectiveSessionCount = Math.max(
+              conn.sessionCount,
+              partners.length === 1 && stats.sessionsCount > 0 ? stats.sessionsCount : 0
+            )
+            const effectiveTotalMinutes = Math.max(
+              conn.totalMinutes,
+              partners.length === 1 && stats.totalMinutes > 0 ? stats.totalMinutes : effectiveSessionCount * 30
+            )
+            const effectiveGoals = Math.max(
+              conn.goalsCompleted,
+              partners.length === 1 && stats.goalsCompleted > 0 ? stats.goalsCompleted : 0
+            )
+
+            const level = getRelationshipLevel(effectiveSessionCount)
+            const progress = getRelationshipProgress(effectiveSessionCount)
+            const next = getNextLevelInfo(effectiveSessionCount)
             const levelColor = getRelationshipColor(level)
 
             return (
@@ -126,7 +159,11 @@ export default function StudyHistoryPage() {
                 <div>
                   <div className="flex items-center justify-between text-[11px] text-[#7E4228] font-bold mb-1">
                     <span>Relationship Progress</span>
-                    {next && <span>{next.sessionsNeeded} sessions to {next.nextLevel}</span>}
+                    {next ? (
+                      <span>{next.sessionsNeeded} sessions to {next.nextLevel}</span>
+                    ) : (
+                      <span className="text-emerald-700 font-black">Max Level Achieved ✨</span>
+                    )}
                   </div>
                   <div className="h-2.5 bg-[#E5DFD9] rounded-full overflow-hidden p-0.5 shadow-inner">
                     <div
@@ -139,15 +176,15 @@ export default function StudyHistoryPage() {
                 {/* Stats */}
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="bg-[#EAE5E0] rounded-xl p-2 border border-[#7E4228]/15">
-                    <div className="font-black text-sm text-[#4C271A]">{conn.sessionCount}</div>
+                    <div className="font-black text-sm text-[#4C271A]">{effectiveSessionCount}</div>
                     <div className="text-[10px] text-[#7E4228] font-bold">Sessions</div>
                   </div>
                   <div className="bg-[#EAE5E0] rounded-xl p-2 border border-[#7E4228]/15">
-                    <div className="font-black text-sm text-[#4C271A]">{(conn.totalMinutes / 60).toFixed(1)}h</div>
+                    <div className="font-black text-sm text-[#4C271A]">{(effectiveTotalMinutes / 60).toFixed(1)}h</div>
                     <div className="text-[10px] text-[#7E4228] font-bold">Hours</div>
                   </div>
                   <div className="bg-[#EAE5E0] rounded-xl p-2 border border-[#7E4228]/15">
-                    <div className="font-black text-sm text-[#4C271A]">{conn.goalsCompleted}</div>
+                    <div className="font-black text-sm text-[#4C271A]">{effectiveGoals}</div>
                     <div className="text-[10px] text-[#7E4228] font-bold">Goals</div>
                   </div>
                 </div>

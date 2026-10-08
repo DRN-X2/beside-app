@@ -204,11 +204,14 @@ export const DuoPage: React.FC = () => {
         payload: { cancelledBy: currentUser.id },
       }).catch(() => {})
 
-      // 2. Mark cancelled in database
-      await supabase.from('sessions').update({
-        status: 'cancelled',
-        ends_at: new Date().toISOString(),
-      }).eq('id', sessionId)
+      // 2. Mark cancelled ONLY if session wasn't already completed
+      const isCompleted = useSessionStore.getState().isCompleted
+      if (!isCompleted) {
+        await supabase.from('sessions').update({
+          status: 'cancelled',
+          ends_at: new Date().toISOString(),
+        }).eq('id', sessionId)
+      }
     }
     await endSessionDB()
     navigate('/discover')
