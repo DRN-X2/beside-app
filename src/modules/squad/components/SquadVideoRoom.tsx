@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { MeetBottomBar } from '../../../shared/components/MeetBottomBar'
 import { OtterAvatarWithBadge } from '../../../shared/components/OtterAvatarWithBadge'
 import { DraggableObjectivesCard } from '../../duo/components/DraggableObjectivesCard'
+import { OllieQuizModal } from '../../duo/components/OllieQuizModal'
 import { useAuthStore } from '../../../store/authStore'
 import { useConnectionStore, recordCompletedSessionPartner } from '../../../store/connectionStore'
 import { CheckCircle2, Clock, Users, VideoOff, MicOff, Mic, Sparkles, MessageSquare, Award, Check, Target } from 'lucide-react'
@@ -54,6 +55,7 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
 
   const [showEndModal, setShowEndModal] = useState(false)
   const [showObjectives, setShowObjectives] = useState(false)
+  const [showOllieQuiz, setShowOllieQuiz] = useState(false)
   const [activeTab, setActiveTab] = useState<'video' | 'chat'>('video')
   const [isMuted, setIsMuted] = useState(false)
   const [isCameraOff, setIsCameraOff] = useState(false)
@@ -426,9 +428,12 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
           isMuted={isMuted}
           isCameraOff={isCameraOff}
           isChatOpen={activeTab === 'chat'}
+          unreadCount={messages.length}
+          isOllieOpen={showOllieQuiz}
           onToggleMic={handleToggleMic}
           onToggleCamera={handleToggleCamera}
           onToggleChat={() => setActiveTab((prev) => (prev === 'chat' ? 'video' : 'chat'))}
+          onToggleOllie={() => setShowOllieQuiz((prev) => !prev)}
           onEndCall={() => setShowEndModal(true)}
         />
       </div>
@@ -561,6 +566,13 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
           </div>
         </div>
       )}
+
+      {/* Ollie Quiz Modal */}
+      <OllieQuizModal
+        isOpen={showOllieQuiz}
+        onClose={() => setShowOllieQuiz(false)}
+        partnerName={squad?.name || 'Squad'}
+      />
     </div>
   )
 }

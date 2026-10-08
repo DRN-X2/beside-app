@@ -4,6 +4,7 @@ import { MeetBottomBar } from '../../../shared/components/MeetBottomBar'
 import { OtterAvatarWithBadge } from '../../../shared/components/OtterAvatarWithBadge'
 import { DraggableObjectivesCard } from './DraggableObjectivesCard'
 import { DuoInCallSharedSpace } from './DuoInCallSharedSpace'
+import { OllieQuizModal } from './OllieQuizModal'
 import { useSessionStore } from '../../../store/sessionStore'
 import { useAuthStore } from '../../../store/authStore'
 import { useConnectionStore, recordCompletedSessionPartner } from '../../../store/connectionStore'
@@ -55,7 +56,8 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
   const [isCameraOff, setIsCameraOff] = useState(initialCameraOff)
   const [isPartnerCameraOff, setIsPartnerCameraOff] = useState(false)
   const [isPartnerMuted, setIsPartnerMuted] = useState(false)
-  const [sharedView, setSharedView] = useState<'video' | 'quiz' | 'chat'>('video')
+  const [sharedView, setSharedView] = useState<'video' | 'chat'>('video')
+  const [showOllieQuiz, setShowOllieQuiz] = useState(false)
   const [showEndModal, setShowEndModal] = useState(false)
   const [showObjectives, setShowObjectives] = useState(false)
 
@@ -508,8 +510,6 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
                 onSendMessage={(text) =>
                   sendMessageDB(text, currentUser.id, currentUser.display_name)
                 }
-                activeView={sharedView === 'chat' ? 'chat' : 'quiz'}
-                onChangeView={(v) => setSharedView(v)}
               />
             </div>
 
@@ -584,13 +584,15 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
         <MeetBottomBar
           isMuted={isMuted}
           isCameraOff={isCameraOff}
-          isChatOpen={sharedView === 'chat' || sharedView === 'quiz'}
+          isChatOpen={sharedView === 'chat'}
           unreadCount={messages.length}
+          isOllieOpen={showOllieQuiz}
           onToggleMic={handleToggleMic}
           onToggleCamera={handleToggleCamera}
           onToggleChat={() =>
-            setSharedView((v) => (v === 'video' ? 'chat' : 'video'))
+            setSharedView((v) => (v === 'chat' ? 'video' : 'chat'))
           }
+          onToggleOllie={() => setShowOllieQuiz((prev) => !prev)}
           onEndCall={() => setShowEndModal(true)}
         />
       </div>
@@ -725,6 +727,13 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
           </div>
         </div>
       )}
+
+      {/* Ollie Quiz Modal */}
+      <OllieQuizModal
+        isOpen={showOllieQuiz}
+        onClose={() => setShowOllieQuiz(false)}
+        partnerName={partner.display_name}
+      />
     </div>
   )
 }
