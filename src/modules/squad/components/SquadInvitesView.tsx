@@ -88,7 +88,7 @@ export const SquadInvitesView: React.FC<SquadInvitesViewProps> = ({
                     </div>
                   </div>
                   <span className="text-[10px] font-black uppercase bg-[#FAF2E6] text-[#7E4228] px-2 py-0.5 rounded-md border border-[#7E4228]/20">
-                    {inv.squad?.duration || 50} min
+                    {inv.squad?.duration || 30} min
                   </span>
                 </div>
 

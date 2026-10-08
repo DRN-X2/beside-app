@@ -8,20 +8,49 @@ import { CheckCircle2, Clock, Users, VideoOff, MicOff, Mic, Sparkles, MessageSqu
 import type { DemoUser, DuoObjective } from '../../../types'
 import { useSessionStore } from '../../../store/sessionStore'
 import { supabase } from '../../../lib/supabase'
+import type { Squad } from '../../../services/squadService'
+import { subscribeToActiveSession, fetchSessionObjectives } from '../../../services/realtimeHub'
 
 interface SquadVideoRoomProps {
+  squad?: Squad | null
   teamMembers: DemoUser[]
   onEndSession: () => void
 }
 
 export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
+  squad,
   teamMembers,
   onEndSession,
 }) => {
   const { profile } = useAuthStore()
-  if (!profile) return null
   const currentUser = profile
+  if (!currentUser) return null
   const { connections, sendRequestDB, fetchConnections } = useConnectionStore()
+
+  // Strictly for Squad: Automatically synchronize squad topic and up to 3 objectives
+  useEffect(() => {
+    if (squad) {
+      if (squad.focus) {
+        useSessionStore.getState().setSubject(squad.focus)
+      }
+      if (squad.id) {
+        subscribeToActiveSession(squad.id)
+        fetchSessionObjectives(squad.id)
+      }
+      if (squad.objectives && squad.objectives.length > 0) {
+        const existing = useSessionStore.getState().objectives
+        if (existing.length === 0) {
+          useSessionStore.getState().setObjectives(
+            squad.objectives.slice(0, 3).map((text, idx) => ({
+              id: `squad-obj-${squad.id}-${idx}`,
+              text,
+              completed: false,
+            }))
+          )
+        }
+      }
+    }
+  }, [squad?.id, squad?.focus, squad?.objectives])
 
   const [showEndModal, setShowEndModal] = useState(false)
   const [showObjectives, setShowObjectives] = useState(false)
@@ -414,7 +443,7 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
               </div>
               <h3 className="font-display font-black text-xl text-[#2D1B11]">Session Completed!</h3>
               <p className="text-xs text-[#7A5A46] font-semibold mt-1">
-                You studied for 30 minutes with your squad.
+                You studied for {squad?.duration || 30} minutes with your squad.
               </p>
             </div>
 
@@ -458,8 +487,9 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
               </div>
             ) : (
               <div className="bg-[#FCFAF7] border border-emerald-200 rounded-2xl p-3 mb-4 text-xs">
-                <span className="text-[10px] font-black uppercase text-emerald-700 block mb-1">
-                  Squad Buddies ✨
+                <span className="text-[10px] font-black uppercase text-emerald-700 flex items-center gap-1 mb-1">
+                  <span>Squad Buddies</span>
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600" />
                 </span>
                 <p className="text-xs text-[#2D1B11] font-bold">
                   You are already connected with all squad members!

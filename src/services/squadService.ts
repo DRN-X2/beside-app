@@ -15,7 +15,7 @@ export interface SquadMember {
 
 export interface SquadMatchInfo {
   score: number // e.g. 92 (meaning 92%)
-  reasons: string[] // e.g. ['Web Development', 'React', '50-min sessions']
+  reasons: string[] // e.g. ['Web Development', 'React', '30-min session']
 }
 
 export interface Squad {
@@ -24,10 +24,11 @@ export interface Squad {
   name: string
   description?: string
   focus: string
-  objective: string
-  duration: number // 30, 50, 60
-  max_members: number // 3, 4, 5 (default 5)
-  min_members: number // 3
+  objective: string // Primary objective
+  objectives: string[] // Up to 3 learning objectives
+  duration: number // 15, 30, 60 min
+  max_members: number // Always 5
+  min_members: number // Always 3
   privacy: 'public' | 'private'
   status: 'gathering' | 'starting_soon' | 'active' | 'completed' | 'cancelled'
   created_at: string
@@ -71,7 +72,7 @@ export function calculateSquadMatch(
   squadFocus: string,
   squadObjective: string,
   tags: string[] = [],
-  duration: number = 50
+  duration: number = 30
 ): SquadMatchInfo {
   if (!profile) {
     return { score: 75, reasons: ['General Study Match'] }
@@ -90,11 +91,10 @@ export function calculateSquadMatch(
   const squadText = `${squadFocus} ${squadObjective} ${tags.join(' ')}`.toLowerCase()
 
   // 1. Topic & Interests overlap
-  userKeywords.forEach(k => {
+  userKeywords.forEach((k) => {
     if (k.length > 2 && squadText.includes(k)) {
       score += 8
       if (reasons.length < 3) {
-        // Capitalize for display
         const displayWord = k.charAt(0).toUpperCase() + k.slice(1)
         reasons.push(displayWord)
       }
@@ -102,12 +102,15 @@ export function calculateSquadMatch(
   })
 
   // 2. Session duration preference
-  if (profile.study_style?.includes('sprint') && duration <= 30) {
+  if (duration === 15) {
     score += 5
-    reasons.push('Sprint Duration')
-  } else if (duration === 50) {
+    reasons.push('15-min Sprint')
+  } else if (duration === 30) {
+    score += 6
+    reasons.push('30-min Focus')
+  } else if (duration === 60) {
     score += 5
-    reasons.push('50-min Focus')
+    reasons.push('1-hr Deep Study')
   }
 
   // 3. Collaborative preference
@@ -115,8 +118,8 @@ export function calculateSquadMatch(
     score += 5
   }
 
-  // Clamp score between 72% and 98%
-  const finalScore = Math.min(98, Math.max(72, score))
+  // Clamp score between 70% and 98%
+  const finalScore = Math.min(98, Math.max(70, score))
 
   if (reasons.length === 0) {
     reasons.push(squadFocus.split(' ')[0] || 'Learning Goals')
@@ -131,8 +134,12 @@ export function calculateSquadMatch(
 
 /**
  * Fetch all public squads available for discovery.
+ * Strictly queries real sessions from Supabase. Zero mock or demo squads.
  */
-export async function fetchPublicSquads(currentUserId?: string, userProfile?: UserProfile | null): Promise<Squad[]> {
+export async function fetchPublicSquads(
+  currentUserId?: string,
+  userProfile?: UserProfile | null
+): Promise<Squad[]> {
   try {
     // 1. Query active / waiting squad sessions from Supabase sessions table
     const { data: dbSessions, error } = await supabase
@@ -142,289 +149,71 @@ export async function fetchPublicSquads(currentUserId?: string, userProfile?: Us
       .in('status', ['waiting', 'active'])
       .order('created_at', { ascending: false })
 
+    if (error || !dbSessions) {
+      return []
+    }
+
+    // 2. Query session objectives for all found squads
+    const sessionIds = dbSessions.map((s: any) => s.id)
+    let objectivesBySession: Record<string, string[]> = {}
+    if (sessionIds.length > 0) {
+      const { data: objs } = await supabase
+        .from('session_objectives')
+        .select('*')
+        .in('session_id', sessionIds)
+        .order('created_at', { ascending: true })
+
+      if (objs) {
+        objs.forEach((o: any) => {
+          if (!objectivesBySession[o.session_id]) {
+            objectivesBySession[o.session_id] = []
+          }
+          objectivesBySession[o.session_id].push(o.text)
+        })
+      }
+    }
+
     const squads: Squad[] = []
 
-    if (!error && dbSessions && dbSessions.length > 0) {
-      dbSessions.forEach((s: any) => {
-        const creator = normalizeProfile(s.host)
-        const participants = (s.session_participants || []).map((p: any, idx: number) => ({
-          id: p.id,
-          squad_id: s.id,
-          user_id: p.user_id,
-          role: p.user_id === s.host_id ? ('leader' as const) : ('member' as const),
-          ready: p.status === 'joined',
-          slot_index: p.slot_index ?? idx,
-          joined_at: p.joined_at || s.created_at,
-          profile: normalizeProfile(p.user) || creator,
-        }))
+    dbSessions.forEach((s: any) => {
+      const creator = normalizeProfile(s.host)
+      const participants: SquadMember[] = (s.session_participants || []).map((p: any, idx: number) => ({
+        id: p.id,
+        squad_id: s.id,
+        user_id: p.user_id,
+        role: p.user_id === s.host_id ? ('leader' as const) : ('member' as const),
+        ready: p.status === 'joined',
+        slot_index: p.slot_index ?? idx,
+        joined_at: p.joined_at || s.created_at,
+        profile: normalizeProfile(p.user) || creator,
+      }))
 
-        const focus = s.subject || 'Collaborative Study'
-        const duration = s.duration_minutes || 50
-        const match = calculateSquadMatch(userProfile || null, focus, '', [focus], duration)
+      const focus = s.subject || 'Collaborative Study'
+      const duration = s.duration_minutes || 30
+      const squadObjectives = objectivesBySession[s.id] || []
+      const primaryObjective = squadObjectives[0] || 'Learn and review concepts together'
+      const match = calculateSquadMatch(userProfile || null, focus, primaryObjective, [focus], duration)
 
-        squads.push({
-          id: s.id,
-          creator_id: s.host_id,
-          name: s.subject || 'Study Squad',
-          description: 'Collaborative group study lobby',
-          focus,
-          objective: 'Learn and review concepts together',
-          duration,
-          max_members: 5,
-          min_members: 3,
-          privacy: 'public',
-          status: s.status === 'waiting' ? 'gathering' : 'active',
-          created_at: s.created_at,
-          tags: [focus.split(' ')[0] || 'Study', 'Collaboration'],
-          members: participants,
-          creator: creator || undefined,
-          match,
-        })
+      squads.push({
+        id: s.id,
+        creator_id: s.host_id,
+        name: s.subject || 'Study Squad',
+        description: 'Collaborative group study lobby',
+        focus,
+        objective: primaryObjective,
+        objectives: squadObjectives,
+        duration,
+        max_members: 5,
+        min_members: 3,
+        privacy: 'public',
+        status: s.status === 'waiting' ? 'gathering' : 'active',
+        created_at: s.created_at,
+        tags: [focus.split(' ')[0] || 'Study', 'Collaboration'],
+        members: participants,
+        creator: creator || undefined,
+        match,
       })
-    }
-
-    // 2. If no squads exist in database yet, provide dynamic community squads
-    // to give learners an immediate lively game-lobby browsing experience.
-    if (squads.length === 0) {
-      const demoCommunitySquads: Omit<Squad, 'match'>[] = [
-        {
-          id: 'squad-community-1',
-          creator_id: 'creator-tech',
-          name: 'TECH EXPLORERS',
-          description: 'Review REST APIs, backend architecture, and endpoint best practices.',
-          focus: 'Web Development',
-          objective: 'Review REST APIs and build a simple endpoint.',
-          duration: 50,
-          max_members: 5,
-          min_members: 3,
-          privacy: 'public',
-          status: 'gathering',
-          created_at: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-          tags: ['Web Development', 'Databases', 'APIs'],
-          members: [
-            {
-              id: 'm1',
-              squad_id: 'squad-community-1',
-              user_id: 'u-maria',
-              role: 'leader',
-              ready: true,
-              slot_index: 0,
-              joined_at: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-              profile: {
-                id: 'u-maria',
-                username: 'maria_s',
-                display_name: 'Maria Santos',
-                school: 'UST',
-                degree_program: 'BS Information Technology',
-                education_level: 'Undergraduate',
-                year_of_study: '3rd Year',
-                online_status: 'available',
-                otter: { furColor: '#C49A45', earType: 'round', clothing: 'hoodie', accessory: 'glasses', expression: 'happy' },
-              } as any,
-            },
-            {
-              id: 'm2',
-              squad_id: 'squad-community-1',
-              user_id: 'u-james',
-              role: 'member',
-              ready: true,
-              slot_index: 1,
-              joined_at: new Date(Date.now() - 1000 * 60 * 10).toISOString(),
-              profile: {
-                id: 'u-james',
-                username: 'james_r',
-                display_name: 'James Reyes',
-                school: 'DLSU',
-                degree_program: 'BS Computer Science',
-                education_level: 'Undergraduate',
-                year_of_study: '2nd Year',
-                online_status: 'available',
-                otter: { furColor: '#8C5835', earType: 'curled', clothing: 'jacket', accessory: 'headphones', expression: 'calm' },
-              } as any,
-            },
-            {
-              id: 'm3',
-              squad_id: 'squad-community-1',
-              user_id: 'u-rhea',
-              role: 'member',
-              ready: false,
-              slot_index: 2,
-              joined_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-              profile: {
-                id: 'u-rhea',
-                username: 'rhea_o',
-                display_name: 'Rhea Ortiz',
-                school: 'UP Diliman',
-                degree_program: 'BS Computer Engineering',
-                education_level: 'Undergraduate',
-                year_of_study: '3rd Year',
-                online_status: 'available',
-                otter: { furColor: '#E6D7C3', earType: 'pointed', clothing: 'sweater', accessory: 'book', expression: 'focused' },
-              } as any,
-            },
-          ],
-        },
-        {
-          id: 'squad-community-2',
-          creator_id: 'creator-data',
-          name: 'DATA MINING FORUM',
-          description: 'Hands-on sprint studying classification algorithms and decision trees.',
-          focus: 'Data Mining',
-          objective: 'Classification algorithms, decision trees, and model evaluation.',
-          duration: 50,
-          max_members: 5,
-          min_members: 3,
-          privacy: 'public',
-          status: 'gathering',
-          created_at: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
-          tags: ['Data Science', 'Machine Learning', 'Python'],
-          members: [
-            {
-              id: 'm4',
-              squad_id: 'squad-community-2',
-              user_id: 'u-kenji',
-              role: 'leader',
-              ready: true,
-              slot_index: 0,
-              joined_at: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
-              profile: {
-                id: 'u-kenji',
-                username: 'kenji_t',
-                display_name: 'Kenji Tanaka',
-                school: 'Ateneo de Manila',
-                degree_program: 'BS Applied Mathematics',
-                education_level: 'Undergraduate',
-                year_of_study: '4th Year',
-                online_status: 'available',
-                otter: { furColor: '#A47551', earType: 'round', clothing: 'hoodie', accessory: 'coffee', expression: 'happy' },
-              } as any,
-            },
-            {
-              id: 'm5',
-              squad_id: 'squad-community-2',
-              user_id: 'u-elena',
-              role: 'member',
-              ready: true,
-              slot_index: 1,
-              joined_at: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
-              profile: {
-                id: 'u-elena',
-                username: 'elena_v',
-                display_name: 'Elena Vance',
-                school: 'FEU',
-                degree_program: 'BS Information Systems',
-                education_level: 'Undergraduate',
-                year_of_study: '3rd Year',
-                online_status: 'available',
-                otter: { furColor: '#5C3826', earType: 'curled', clothing: 'coat', accessory: 'glasses', expression: 'focused' },
-              } as any,
-            },
-            {
-              id: 'm6',
-              squad_id: 'squad-community-2',
-              user_id: 'u-marcus',
-              role: 'member',
-              ready: true,
-              slot_index: 2,
-              joined_at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-              profile: {
-                id: 'u-marcus',
-                username: 'marcus_c',
-                display_name: 'Marcus Chen',
-                school: 'Mapua University',
-                degree_program: 'BS Computer Science',
-                education_level: 'Undergraduate',
-                year_of_study: '2nd Year',
-                online_status: 'available',
-                otter: { furColor: '#C49A45', earType: 'pointed', clothing: 'vest', accessory: 'none', expression: 'calm' },
-              } as any,
-            },
-            {
-              id: 'm7',
-              squad_id: 'squad-community-2',
-              user_id: 'u-chloe',
-              role: 'member',
-              ready: false,
-              slot_index: 3,
-              joined_at: new Date(Date.now() - 1000 * 60 * 1).toISOString(),
-              profile: {
-                id: 'u-chloe',
-                username: 'chloe_b',
-                display_name: 'Chloe Bennett',
-                school: 'PUP',
-                degree_program: 'BS Statistics',
-                education_level: 'Undergraduate',
-                year_of_study: '3rd Year',
-                online_status: 'available',
-                otter: { furColor: '#E6D7C3', earType: 'round', clothing: 'sweater', accessory: 'flower', expression: 'happy' },
-              } as any,
-            },
-          ],
-        },
-        {
-          id: 'squad-community-3',
-          creator_id: 'creator-algo',
-          name: 'ALGORITHM SPRINT',
-          description: 'Fast-paced review of graph traversals (BFS, DFS, Dijkstra).',
-          focus: 'Data Structures',
-          objective: 'Solve 2 graph traversal problems collaboratively.',
-          duration: 30,
-          max_members: 4,
-          min_members: 3,
-          privacy: 'public',
-          status: 'gathering',
-          created_at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-          tags: ['Algorithms', 'LeetCode', 'Interview Prep'],
-          members: [
-            {
-              id: 'm8',
-              squad_id: 'squad-community-3',
-              user_id: 'u-alex',
-              role: 'leader',
-              ready: true,
-              slot_index: 0,
-              joined_at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-              profile: {
-                id: 'u-alex',
-                username: 'alex_kim',
-                display_name: 'Alex Kim',
-                school: 'UST',
-                degree_program: 'BS Computer Science',
-                education_level: 'Undergraduate',
-                year_of_study: '4th Year',
-                online_status: 'available',
-                otter: { furColor: '#8C5835', earType: 'curled', clothing: 'hoodie', accessory: 'headphones', expression: 'focused' },
-              } as any,
-            },
-            {
-              id: 'm9',
-              squad_id: 'squad-community-3',
-              user_id: 'u-pat',
-              role: 'member',
-              ready: false,
-              slot_index: 1,
-              joined_at: new Date(Date.now() - 1000 * 60 * 1).toISOString(),
-              profile: {
-                id: 'u-pat',
-                username: 'pat_g',
-                display_name: 'Patricia Gomez',
-                school: 'De La Salle Lipa',
-                degree_program: 'BS Information Technology',
-                education_level: 'Undergraduate',
-                year_of_study: '2nd Year',
-                online_status: 'available',
-                otter: { furColor: '#A47551', earType: 'round', clothing: 'jacket', accessory: 'glasses', expression: 'calm' },
-              } as any,
-            },
-          ],
-        },
-      ]
-
-      demoCommunitySquads.forEach(ds => {
-        const match = calculateSquadMatch(userProfile || null, ds.focus, ds.objective, ds.tags, ds.duration)
-        squads.push({ ...ds, match })
-      })
-    }
+    })
 
     // Rank squads by compatibility score (descending)
     squads.sort((a, b) => (b.match?.score || 0) - (a.match?.score || 0))
@@ -437,22 +226,29 @@ export async function fetchPublicSquads(currentUserId?: string, userProfile?: Us
 }
 
 /**
- * Creates a brand new Squad in Supabase.
+ * Creates a brand new Squad in Supabase with up to 3 objectives.
+ * Member capacity is fixed to min 3, max 5.
  */
 export async function createSquadDB(
-  creator: UserProfile | DemoUser,
+  creator: DemoUser,
   params: {
     name: string
     focus: string
-    objective: string
+    objectives: string[] // Up to 3 learning objectives
     description?: string
-    duration: number
-    max_members: number
+    duration: number // 15, 30, 60
     privacy: 'public' | 'private'
     tags?: string[]
   }
 ): Promise<{ squad: Squad | null; error: string | null }> {
   try {
+    const validObjectives = params.objectives
+      .map((o) => o.trim())
+      .filter((o) => o.length > 0)
+      .slice(0, 3)
+
+    const primaryObjective = validObjectives[0] || 'Collaborative study sprint'
+
     const { data: session, error } = await supabase
       .from('sessions')
       .insert({
@@ -478,15 +274,26 @@ export async function createSquadDB(
       joined_at: new Date().toISOString(),
     })
 
+    // Insert up to 3 objectives into session_objectives table
+    if (validObjectives.length > 0) {
+      const objRows = validObjectives.map((text) => ({
+        session_id: session.id,
+        text,
+        completed: false,
+      }))
+      await supabase.from('session_objectives').insert(objRows)
+    }
+
     const newSquad: Squad = {
       id: session.id,
       creator_id: creator.id,
       name: params.name,
       description: params.description,
       focus: params.focus,
-      objective: params.objective,
+      objective: primaryObjective,
+      objectives: validObjectives,
       duration: params.duration,
-      max_members: params.max_members,
+      max_members: 5,
       min_members: 3,
       privacy: params.privacy,
       status: 'gathering',
@@ -519,7 +326,7 @@ export async function createSquadDB(
  */
 export async function sendJoinRequestDB(
   squad: Squad,
-  requester: UserProfile | DemoUser
+  requester: DemoUser
 ): Promise<{ error: string | null }> {
   try {
     // Deliver notification to squad creator
@@ -564,7 +371,7 @@ export async function sendJoinRequestDB(
  */
 export async function sendSquadInviteDB(
   squad: Squad,
-  inviter: UserProfile | DemoUser,
+  inviter: DemoUser,
   inviteeId: string
 ): Promise<{ error: string | null }> {
   try {

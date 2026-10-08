@@ -112,7 +112,7 @@ export const SquadLobbyPage: React.FC = () => {
                 id: n.data?.lobbyId,
                 name: n.data?.squadName || 'Study Squad',
                 focus: n.data?.focus || 'Collaborative Study',
-                duration: n.data?.duration || 50,
+                duration: n.data?.duration || 30,
                 members: Array(n.data?.membersCount || 3).fill(null),
                 max_members: 5,
               } as any,
@@ -205,6 +205,9 @@ export const SquadLobbyPage: React.FC = () => {
         if (payload?.sessionId === lobbyId) {
           setSessionId(lobbyId)
           setSquadActive(true)
+          if (activeSquad) {
+            useSessionStore.getState().setSubject(activeSquad.focus || activeSquad.name)
+          }
           setIsInSession(true)
         }
       })
@@ -237,6 +240,9 @@ export const SquadLobbyPage: React.FC = () => {
           if (payload.new?.status === 'active') {
             setSessionId(lobbyId)
             setSquadActive(true)
+            if (activeSquad) {
+              useSessionStore.getState().setSubject(activeSquad.focus || activeSquad.name)
+            }
             setIsInSession(true)
           }
         }
@@ -311,6 +317,7 @@ export const SquadLobbyPage: React.FC = () => {
     // 3. Launch study session room locally
     setSessionId(activeSquad.id)
     setSquadActive(true)
+    useSessionStore.getState().setSubject(activeSquad.focus || activeSquad.name)
     setIsInSession(true)
   }
 
@@ -467,7 +474,7 @@ export const SquadLobbyPage: React.FC = () => {
   // If in active study video room, render SquadVideoRoom
   if (isInSession && activeSquad) {
     const teamMembers: DemoUser[] = activeSquad.members.map((m) => m.profile as DemoUser)
-    return <SquadVideoRoom teamMembers={teamMembers} onEndSession={handleEndSession} />
+    return <SquadVideoRoom squad={activeSquad} teamMembers={teamMembers} onEndSession={handleEndSession} />
   }
 
   return (
