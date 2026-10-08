@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { COUNTRIES } from '../data/worldLocations'
 import {
   ArrowLeft,
   ArrowRight,
@@ -18,10 +19,20 @@ import {
   Search,
   Plus,
   X,
+  User,
+  Globe,
+  Loader2,
 } from 'lucide-react'
 import OtterAvatar from '../components/OtterAvatar'
 import { useAuthStore } from '../store/authStore'
 import { supabase } from '../lib/supabase'
+import {
+  ACADEMIC_INTEREST_CATEGORIES as TOPIC_CATEGORIES,
+  ALL_PRESET_TOPICS as ALL_PRESET_INTERESTS,
+  SKILL_TAXONOMY_CATEGORIES as SKILL_CATEGORIES,
+  ALL_PRESET_SKILLS,
+  fetchLiveTopicSuggestions,
+} from '../data/academicTaxonomy'
 import type {
   EducationStatus,
   StudyStyle,
@@ -33,7 +44,7 @@ import type {
   OtterConfig,
 } from '../types'
 
-const TOTAL_STEPS = 5
+const TOTAL_STEPS = 7
 
 const EDUCATION_OPTIONS: { id: EducationStatus; label: string; desc: string }[] = [
   { id: 'College', label: 'College / University', desc: 'Undergraduate or degree student' },
@@ -94,224 +105,7 @@ const ACCOUNTABILITY_OPTIONS: { id: AccountabilityPref; label: string; desc: str
   { id: 'flexible', label: 'Casual & Relaxed', desc: 'Zero pressure, just study alongside each other' },
 ]
 
-interface TopicCategory {
-  name: string
-  topics: string[]
-}
 
-const TOPIC_CATEGORIES: TopicCategory[] = [
-  {
-    name: 'Tech & CS',
-    topics: [
-      'Web Development',
-      'Mobile App Development',
-      'Machine Learning & AI',
-      'Data Structures & Algorithms',
-      'Database Systems',
-      'Cloud Computing',
-      'Cybersecurity',
-      'DevOps & Systems',
-      'Game Development',
-      'UI/UX Design',
-      'Data Science & Analytics',
-      'Computer Networks',
-    ],
-  },
-  {
-    name: 'Sciences & Math',
-    topics: [
-      'Mathematics & Calculus',
-      'Linear Algebra & Discrete Math',
-      'Statistics & Probability',
-      'Physics & Mechanics',
-      'Organic Chemistry',
-      'General Chemistry',
-      'Biology & Genetics',
-      'Neuroscience',
-      'Astronomy & Space Science',
-      'Environmental Science',
-    ],
-  },
-  {
-    name: 'Healthcare & Medicine',
-    topics: [
-      'Anatomy & Physiology',
-      'Pharmacology & Drugs',
-      'Nursing Care & Clinicals',
-      'Biochemistry',
-      'Pathology & Diseases',
-      'Public Health & Epidemiology',
-      'Medical Terminology',
-      'Microbiology & Immunology',
-    ],
-  },
-  {
-    name: 'Business & Finance',
-    topics: [
-      'Accounting & Auditing',
-      'Economics (Micro & Macro)',
-      'Financial Management',
-      'Marketing & Digital Strategy',
-      'Business Law & Taxation',
-      'Project Management',
-      'Entrepreneurship',
-      'Supply Chain & Operations',
-    ],
-  },
-  {
-    name: 'Engineering & Arch',
-    topics: [
-      'Civil & Structural Eng.',
-      'Mechanical & Dynamics',
-      'Electrical & Electronics',
-      'Architecture & Spatial Design',
-      'CAD & 3D Modeling',
-      'Materials Engineering',
-      'Robotics & Automation',
-    ],
-  },
-  {
-    name: 'Law & Humanities',
-    topics: [
-      'Constitutional & Civil Law',
-      'Criminal Law & Evidence',
-      'Psychology & Behavior',
-      'Philosophy & Ethics',
-      'History & Civilization',
-      'Political Science',
-      'Sociology & Anthropology',
-      'Literature & Creative Writing',
-    ],
-  },
-  {
-    name: 'Languages & Arts',
-    topics: [
-      'English Academic Writing',
-      'Japanese Language & JLPT',
-      'Spanish Language',
-      'Mandarin Chinese (HSK)',
-      'French Language',
-      'Graphic Design & Art',
-      'Music Theory & Production',
-      'Communications & Media',
-    ],
-  },
-]
-
-const ALL_PRESET_INTERESTS: string[] = Array.from(
-  new Set(TOPIC_CATEGORIES.flatMap((c) => c.topics))
-)
-
-interface SkillCategory {
-  name: string
-  skills: string[]
-}
-
-const SKILL_CATEGORIES: SkillCategory[] = [
-  {
-    name: 'Writing & Languages',
-    skills: [
-      'Essay Proofreading & Editing',
-      'Grammar & Sentence Flow',
-      'Academic Citations (APA / MLA)',
-      'Language Conversation & Speaking',
-      'Creative Writing & Storytelling',
-      'Speech Writing & Debate',
-      'Literature & Text Analysis',
-      'Technical Report Writing',
-    ],
-  },
-  {
-    name: 'Math, Science & Logic',
-    skills: [
-      'Calculus & Math Tutoring',
-      'Algebra & Equation Solving',
-      'Statistics & Data Interpretation',
-      'Physics Problem Solving',
-      'Balancing Chemical Equations',
-      'Mental Math & Fast Shortcuts',
-      'Geometry & Trigonometry',
-      'Logic & Truth Tables',
-    ],
-  },
-  {
-    name: 'Healthcare & Nursing',
-    skills: [
-      'Medical Terminology & Mnemonics',
-      'Anatomy & Organ Systems',
-      'Dosage & Unit Calculations',
-      'Pharmacology Drug Classes',
-      'Nursing Care Plans & Charting',
-      'Biology Lab Protocols',
-      'First Aid & Patient Care',
-    ],
-  },
-  {
-    name: 'Business & Finance',
-    skills: [
-      'Accounting & Ledger Balancing',
-      'Financial Modeling & Excel Formulas',
-      'Business Case Study Analysis',
-      'Marketing & Campaign Strategy',
-      'Pitch Decks & Presentation Slides',
-      'Economics Graphs & Formulas',
-      'Project Timelines & Planning',
-    ],
-  },
-  {
-    name: 'Law, Policy & Debate',
-    skills: [
-      'Legal Briefing (IRAC Method)',
-      'Case Law & Statute Research',
-      'Logical Argumentation & Debating',
-      'Document Synthesis & Summaries',
-      'Policy Analysis & Ethics',
-      'Public Speaking Confidence',
-    ],
-  },
-  {
-    name: 'Design & Media',
-    skills: [
-      'Figma & UI Wireframing',
-      'Canva & Social Graphics',
-      'Photoshop & Photo Retouching',
-      'Video Editing & Reels',
-      'Slide Presentation Aesthetic',
-      '3D Modeling & CAD Drafting',
-      'Digital Illustration & Sketching',
-    ],
-  },
-  {
-    name: 'Coding & Tech',
-    skills: [
-      'Python Scripting & Automation',
-      'JavaScript & Web Development',
-      'React & Frontend Frameworks',
-      'SQL & Database Queries',
-      'Git & GitHub Collaboration',
-      'Java & Object-Oriented Code',
-      'C / C++ & Algorithm Practice',
-      'Code Debugging & Review',
-      'Linux Terminal & Bash Commands',
-    ],
-  },
-  {
-    name: 'Productivity & Study Habits',
-    skills: [
-      'Pomodoro & Focus Accountability',
-      'Notion & Study Note Systems',
-      'Flashcards & Anki Systems',
-      'Mind Mapping & Visual Notes',
-      'Time Management & Daily Scheduling',
-      'Exam Cram & Revision Strategy',
-      'Active Recall & Feynman Technique',
-    ],
-  },
-]
-
-const ALL_PRESET_SKILLS: string[] = Array.from(
-  new Set(SKILL_CATEGORIES.flatMap((c) => c.skills))
-)
 
 const FUR_OPTIONS: OtterFur[] = ['brown', 'tan', 'dark', 'cream', 'grey']
 const CLOTHING_OPTIONS: OtterClothing[] = ['hoodie', 'sweater', 'casual', 'uniform', 'formal']
@@ -319,12 +113,35 @@ const ACCESSORY_OPTIONS: OtterAccessory[] = ['headphones', 'coffee', 'book', 'pe
 
 export default function OnboardingPage() {
   const navigate = useNavigate()
-  const { profile, setProfile, isDemo } = useAuthStore()
+  const { profile, setProfile } = useAuthStore()
+
+  // Location step state (Step 3 - Where are you based?)
+  const [selectedCountry, setSelectedCountry] = useState(profile?.country || '')
+  const [selectedCity, setSelectedCity] = useState(profile?.city || '')
+  const [citySearch, setCitySearch] = useState('')
+
+  const citiesForCountry = useMemo(() => {
+    if (!selectedCountry) return []
+    const c = COUNTRIES.find(c => c.name === selectedCountry)
+    return c?.cities || []
+  }, [selectedCountry])
+
+  const filteredCities = useMemo(() => {
+    if (!citySearch.trim()) return citiesForCountry
+    return citiesForCountry.filter(c => c.toLowerCase().includes(citySearch.toLowerCase()))
+  }, [citiesForCountry, citySearch])
 
   const [step, setStep] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  // Step 1: Academic Background
+  // Step 1: What should we call you? (Display Name)
+  const [displayName, setDisplayName] = useState(
+    profile?.display_name && profile.display_name !== 'Student'
+      ? profile.display_name
+      : ''
+  )
+
+  // Step 2: Academic Background
   const [educationStatus, setEducationStatus] = useState<EducationStatus>(
     profile?.education_status || 'College'
   )
@@ -334,7 +151,7 @@ export default function OnboardingPage() {
   )
   const [yearLevel, setYearLevel] = useState(profile?.year_level || '1st Year')
 
-  // Step 2: Study Habits
+  // Step 3: Study Habits
   const [studyStyle, setStudyStyle] = useState<StudyStyle>(profile?.study_style || 'mixed')
   const [duration, setDuration] = useState<SessionDuration>(
     profile?.preferred_duration || 30
@@ -343,7 +160,7 @@ export default function OnboardingPage() {
     profile?.accountability_pref || 'gentle'
   )
 
-  // Step 3: Interests & Search state
+  // Step 4: Interests & Search state
   const [interestSearch, setInterestSearch] = useState('')
   const [activeTopicCat, setActiveTopicCat] = useState('All')
   const [customInterests, setCustomInterests] = useState<string[]>([])
@@ -353,7 +170,7 @@ export default function OnboardingPage() {
       : []
   )
 
-  // Step 4: Skills & Search state
+  // Step 5: Skills & Search state
   const [skillSearch, setSkillSearch] = useState('')
   const [activeSkillCat, setActiveSkillCat] = useState('All')
   const [customSkills, setCustomSkills] = useState<string[]>([])
@@ -363,7 +180,15 @@ export default function OnboardingPage() {
       : []
   )
 
-  // Step 5: Mascot Starter Vibe
+  // Live external fallback search suggestions (Option 3)
+  const [liveTopicSuggestions, setLiveTopicSuggestions] = useState<string[]>([])
+  const [isLoadingLiveTopics, setIsLoadingLiveTopics] = useState(false)
+  const [liveSkillSuggestions, setLiveSkillSuggestions] = useState<string[]>([])
+  const [isLoadingLiveSkills, setIsLoadingLiveSkills] = useState(false)
+
+
+
+  // Step 6: Mascot Starter Vibe
   const [otter, setOtter] = useState<OtterConfig>(
     profile?.otter || {
       fur: 'brown',
@@ -377,20 +202,24 @@ export default function OnboardingPage() {
 
   // Duolingo Mascot Speech Generator
   const getMascotSpeech = () => {
-    const name = profile?.display_name || 'Study Buddy'
+    const name = displayName.trim() || 'friend'
     switch (step) {
       case 1:
-        return `Hey ${name}! Welcome to Beside. Let's start with where you study so we can match you with fellow campus peers.`
+        return `Welcome to BESIDE! What should we call you?`
       case 2:
-        return `Awesome! How do you work best? Let me know your study vibe so your partners match your focus pace.`
+        return `Hey ${name}! Welcome to Beside. Let's start with where you study so we can match you with fellow campus peers.`
       case 3:
-        return `Pick 3 to 5 topics you're diving into. I'll find study buddies working through the exact same subjects!`
+        return `Where are you based, ${name}? Your city places you on OpenWorld — BESIDE's global learning map!`
       case 4:
-        return `What are your secret superpowers? Pick up to 3 skills you can help a study buddy with — from writing, math, and healthcare to design, tech, and study habits!`
+        return `Awesome! How do you work best, ${name}? Let me know your study vibe so your partners match your focus pace.`
       case 5:
+        return `Pick 3 to 5 topics you're diving into. I'll find study buddies working through the exact same subjects!`
+      case 6:
+        return `What are your secret superpowers? Pick up to 3 skills you can help a study buddy with — from writing, math, and healthcare to design, tech, and study habits!`
+      case 7:
         return `Give me a signature look! Choose your fur, outfit, and study companion item.`
       default:
-        return `You're all set! Let's explore your matched study buddies.`
+        return `You're all set, ${name}! Let's explore your matched study buddies.`
     }
   }
 
@@ -468,17 +297,86 @@ export default function OnboardingPage() {
     return list.filter((s) => s.toLowerCase().includes(q))
   }, [activeSkillCat, skillSearch, customSkills])
 
+  useEffect(() => {
+    const query = interestSearch.trim()
+    if (query.length < 2) {
+      setLiveTopicSuggestions([])
+      setIsLoadingLiveTopics(false)
+      return
+    }
+
+    const controller = new AbortController()
+    setIsLoadingLiveTopics(true)
+
+    const timer = setTimeout(async () => {
+      try {
+        const results = await fetchLiveTopicSuggestions(query, controller.signal)
+        const localMatches = filteredTopics.map((t) => t.toLowerCase())
+        const clean = results.filter(
+          (r) => !interests.includes(r) && !localMatches.includes(r.toLowerCase())
+        )
+        setLiveTopicSuggestions(clean)
+      } catch {
+        setLiveTopicSuggestions([])
+      } finally {
+        setIsLoadingLiveTopics(false)
+      }
+    }, 300)
+
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [interestSearch, filteredTopics, interests])
+
+  useEffect(() => {
+    const query = skillSearch.trim()
+    if (query.length < 2) {
+      setLiveSkillSuggestions([])
+      setIsLoadingLiveSkills(false)
+      return
+    }
+
+    const controller = new AbortController()
+    setIsLoadingLiveSkills(true)
+
+    const timer = setTimeout(async () => {
+      try {
+        const results = await fetchLiveTopicSuggestions(query, controller.signal)
+        const localMatches = filteredSkills.map((s) => s.toLowerCase())
+        const clean = results.filter(
+          (r) => !skills.includes(r) && !localMatches.includes(r.toLowerCase())
+        )
+        setLiveSkillSuggestions(clean)
+      } catch {
+        setLiveSkillSuggestions([])
+      } finally {
+        setIsLoadingLiveSkills(false)
+      }
+    }, 300)
+
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [skillSearch, filteredSkills, skills])
+
   const canProceed = () => {
     switch (step) {
       case 1:
-        return school.trim().length > 0 && degreeProgram.trim().length > 0
+        return displayName.trim().length >= 2
       case 2:
-        return true
+        return school.trim().length > 0 && degreeProgram.trim().length > 0
       case 3:
-        return interests.length >= 3
+        // Location step: must select at least a country
+        return selectedCountry.trim().length > 0
       case 4:
-        return skills.length >= 2
+        return true
       case 5:
+        return interests.length >= 3
+      case 6:
+        return skills.length >= 2
+      case 7:
         return true
       default:
         return true
@@ -512,6 +410,10 @@ export default function OnboardingPage() {
       ? words.map((w) => w[0]?.toUpperCase()).join('').slice(0, 5)
       : degreeProgram.slice(0, 4).toUpperCase()
 
+    const finalCountry = selectedCountry.trim() || 'Philippines'
+    const finalCity = selectedCity.trim() || 'Manila'
+    const countryCode = COUNTRIES.find(c => c.name === finalCountry)?.code || 'PH'
+
     const fullOtterConfig = {
       ...otter,
       onboarding_completed: true,
@@ -524,10 +426,18 @@ export default function OnboardingPage() {
       preferred_duration: duration,
       accountability_pref: accountability,
       learning_interests: interests,
+      country: finalCountry,
+      country_code: countryCode,
+      city: finalCity,
+      openworld_visible: true,
     }
+
+    const finalDisplayName = displayName.trim() || 'Student'
 
     const updatedProfile = {
       ...(profile || {}),
+      display_name: finalDisplayName,
+      username: profile?.username || `user_${finalDisplayName.toLowerCase().replace(/[^a-z0-9]/g, '')}`,
       education_status: educationStatus,
       school: school.trim(),
       degree_program: degreeProgram.trim(),
@@ -542,6 +452,10 @@ export default function OnboardingPage() {
       otter: otter,
       otter_config: fullOtterConfig,
       onboarding_completed: true,
+      country: finalCountry,
+      country_code: countryCode,
+      city: finalCity,
+      openworld_visible: true,
       xp: (profile?.xp || 0) + 100, // +100 XP Onboarding bonus!
     }
 
@@ -549,15 +463,27 @@ export default function OnboardingPage() {
     useAuthStore.setState({ isNewSignUp: false })
 
     // Persist directly to Supabase using only the columns that actually exist in the schema
-    if (!isDemo && profile?.id && !profile.id.startsWith('demo-')) {
-      await (supabase.from('profiles') as any).update({
-        interests: interests,
-        skills: skills,
-        category: educationStatus,
-        course_grade: `${yearLevel} - ${degreeProgram}${school ? ` (${school})` : ''}`,
-        otter_config: fullOtterConfig,
-        xp: updatedProfile.xp,
-      }).eq('id', profile.id)
+    if (profile?.id) {
+      try {
+        const { error } = await (supabase.from('profiles') as any).update({
+          display_name: finalDisplayName,
+          interests: interests,
+          skills: skills,
+          category: educationStatus,
+          course_grade: `${yearLevel} - ${degreeProgram}${school ? ` (${school})` : ''}`,
+          country: finalCountry,
+          country_code: countryCode,
+          city: finalCity,
+          openworld_visible: true,
+          otter_config: fullOtterConfig,
+          xp: updatedProfile.xp,
+        }).eq('id', profile.id)
+        if (error) {
+          console.error('[Onboarding] Error updating profile in Supabase:', error.message)
+        }
+      } catch (err) {
+        console.error('[Onboarding] Exception updating profile:', err)
+      }
     }
 
     setIsSubmitting(false)
@@ -616,8 +542,45 @@ export default function OnboardingPage() {
           </div>
         </div>
 
-        {/* STEP 1: Academic Background */}
+        {/* STEP 1: What should we call you? */}
         {step === 1 && (
+          <div className="space-y-4 animate-slide-up">
+            <div>
+              <h2 className="text-xl font-black text-[#4C271A] tracking-tight">
+                What should we call you?
+              </h2>
+              <p className="text-xs text-[#7E4228] font-semibold mt-0.5">
+                Your display name visible to other study buddies on BESIDE
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <label className="text-xs font-bold text-[#4C271A] block mb-1.5">
+                Display Name *
+              </label>
+              <input
+                type="text"
+                autoFocus
+                placeholder="Adrian"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && canProceed()) {
+                    e.preventDefault()
+                    handleNext()
+                  }
+                }}
+                className="w-full bg-[#F1F1F1] rounded-2xl px-4 py-3.5 text-sm font-semibold text-[#4C271A] placeholder-[#7E4228]/50 shadow-[inset_2px_2px_5px_rgba(76,39,26,0.08),inset_-2px_-2px_5px_rgba(255,255,255,0.85)] border border-[#7E4228]/20 focus:outline-none focus:border-[#7E4228]"
+              />
+              <p className="text-[11px] text-[#7E4228]/70 mt-1.5 font-medium">
+                At least 2 characters. You can change this anytime in profile settings.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 2: Academic Background */}
+        {step === 2 && (
           <div className="space-y-4 animate-slide-up">
             <div>
               <h2 className="text-lg font-black text-[#4C271A] tracking-tight">
@@ -719,8 +682,108 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* STEP 2: Study Habits & Pace */}
-        {step === 2 && (
+        {/* STEP 3: Where Are You Based? (OpenWorld Location) */}
+        {step === 3 && (
+          <div className="space-y-4 animate-slide-up">
+            <div>
+              <h2 className="text-lg font-black text-[#4C271A] tracking-tight">
+                Where are you based?
+              </h2>
+              <p className="text-xs text-[#7E4228] font-semibold mt-0.5">
+                Your city and country place you on OpenWorld — BESIDE's global learning map
+              </p>
+            </div>
+
+            {/* Info card */}
+            <div className="flex items-start gap-2.5 p-3 bg-[#E5DFD9]/60 rounded-2xl border border-[#7E4228]/20">
+              <Globe className="w-5 h-5 text-[#7E4228] flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-[11px] font-bold text-[#4C271A]">
+                  Only City + Country are stored
+                </p>
+                <p className="text-[10px] text-[#7E4228]/80 mt-0.5 leading-relaxed">
+                  We never request your exact address, street, GPS location, or barangay. Your broad city location places your otter on the OpenWorld map so learners can discover you.
+                </p>
+              </div>
+            </div>
+
+            {/* Country Selector */}
+            <div>
+              <label className="text-xs font-bold text-[#4C271A] block mb-1.5">
+                Country *
+              </label>
+              <select
+                value={selectedCountry}
+                onChange={(e) => {
+                  setSelectedCountry(e.target.value)
+                  setSelectedCity('')
+                  setCitySearch('')
+                }}
+                className="w-full bg-[#F1F1F1] rounded-2xl px-4 py-3 text-xs sm:text-sm font-semibold text-[#4C271A] shadow-[inset_2px_2px_5px_rgba(76,39,26,0.08),inset_-2px_-2px_5px_rgba(255,255,255,0.85)] border border-[#7E4228]/20 focus:outline-none focus:border-[#7E4228] appearance-none cursor-pointer"
+              >
+                <option value="">Select your country…</option>
+                {COUNTRIES.map(c => (
+                  <option key={c.code} value={c.name}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* City Selector */}
+            {selectedCountry && (
+              <div>
+                <label className="text-xs font-bold text-[#4C271A] block mb-1.5">
+                  City
+                </label>
+                {citiesForCountry.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      {filteredCities.map(city => (
+                        <button
+                          key={city}
+                          type="button"
+                          onClick={() => setSelectedCity(city)}
+                          className={`py-2.5 px-3 rounded-2xl text-xs font-bold text-left transition-all ${
+                            selectedCity === city
+                              ? 'bg-[#7E4228] text-white shadow-md border border-[#4C271A]/30'
+                              : 'bg-white text-[#7E4228] border border-black/5 shadow-sm hover:border-[#7E4228]/30'
+                          }`}
+                        >
+                          {city}
+                        </button>
+                      ))}
+                    </div>
+                    {citiesForCountry.length > 6 && (
+                      <input
+                        type="text"
+                        placeholder="Search city…"
+                        value={citySearch}
+                        onChange={e => setCitySearch(e.target.value)}
+                        className="mt-2 w-full bg-[#F1F1F1] rounded-2xl px-4 py-2.5 text-xs font-semibold text-[#4C271A] placeholder-[#7E4228]/50 shadow-[inset_2px_2px_5px_rgba(76,39,26,0.08)] border border-[#7E4228]/20 focus:outline-none focus:border-[#7E4228]"
+                      />
+                    )}
+                  </>
+                ) : (
+                  <input
+                    type="text"
+                    placeholder="Enter your city name…"
+                    value={selectedCity}
+                    onChange={e => setSelectedCity(e.target.value)}
+                    className="w-full bg-[#F1F1F1] rounded-2xl px-4 py-3 text-xs sm:text-sm font-semibold text-[#4C271A] placeholder-[#7E4228]/50 shadow-[inset_2px_2px_5px_rgba(76,39,26,0.08)] border border-[#7E4228]/20 focus:outline-none focus:border-[#7E4228]"
+                  />
+                )}
+              </div>
+            )}
+
+            {selectedCountry && (
+              <p className="text-[10px] text-[#7E4228]/70 font-medium">
+                You can update your location anytime from Profile settings.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* STEP 4: Study Habits & Pace */}
+        {step === 4 && (
           <div className="space-y-4 animate-slide-up">
             <div>
               <h2 className="text-lg font-black text-[#4C271A] tracking-tight">
@@ -815,8 +878,8 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* STEP 3: Learning Interests (Pick 3 to 5) */}
-        {step === 3 && (
+        {/* STEP 5: Learning Interests (Pick 3 to 5) */}
+        {step === 5 && (
           <div className="space-y-3.5 animate-slide-up">
             <div className="flex items-center justify-between">
               <div>
@@ -925,6 +988,39 @@ export default function OnboardingPage() {
               </button>
             )}
 
+            {/* Live External Library Suggestions */}
+            {isLoadingLiveTopics && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#E5DFD9]/60 border border-[#7E4228]/15 text-[11px] font-bold text-[#7E4228] animate-fade-in">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#7E4228]" />
+                <span>Searching global academic encyclopedia...</span>
+              </div>
+            )}
+
+            {liveTopicSuggestions.length > 0 && (
+              <div className="bg-white/90 p-3 rounded-2xl border border-[#7E4228]/20 space-y-2 shadow-xs animate-slide-up">
+                <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-wider text-[#7E4228]">
+                  <span className="flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-[#7E4228]" />
+                    <span>Global Academic Database Matches</span>
+                  </span>
+                  <span className="text-[10px] text-[#7E4228]/70 lowercase font-medium">Click to add</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {liveTopicSuggestions.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => addCustomInterest(item)}
+                      className="px-2.5 py-1.5 rounded-xl bg-[#E5DFD9] hover:bg-[#7E4228] hover:text-white text-[#4C271A] text-xs font-bold transition-all flex items-center gap-1 border border-[#7E4228]/20 shadow-xs cursor-pointer active:scale-95"
+                    >
+                      <Plus className="w-3 h-3 text-[#7E4228]" />
+                      <span>{item}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Category Filter Chips */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar -mx-1 px-1">
               {['All', ...TOPIC_CATEGORIES.map((c) => c.name)].map((cat) => (
@@ -982,8 +1078,8 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* STEP 4: Skills & What You Can Teach (Pick 2 or 3) */}
-        {step === 4 && (
+        {/* STEP 6: Skills & What You Can Teach (Pick 2 or 3) */}
+        {step === 6 && (
           <div className="space-y-3.5 animate-slide-up">
             <div className="flex items-center justify-between">
               <div>
@@ -1091,6 +1187,39 @@ export default function OnboardingPage() {
               </button>
             )}
 
+            {/* Live External Library Suggestions for Skills */}
+            {isLoadingLiveSkills && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#E5DFD9]/60 border border-[#7E4228]/15 text-[11px] font-bold text-[#7E4228] animate-fade-in">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#7E4228]" />
+                <span>Searching global skills & topics library...</span>
+              </div>
+            )}
+
+            {liveSkillSuggestions.length > 0 && (
+              <div className="bg-white/90 p-3 rounded-2xl border border-[#7E4228]/20 space-y-2 shadow-xs animate-slide-up">
+                <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-wider text-[#7E4228]">
+                  <span className="flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-[#7E4228]" />
+                    <span>Global Library Skill Matches</span>
+                  </span>
+                  <span className="text-[10px] text-[#7E4228]/70 lowercase font-medium">Click to add</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {liveSkillSuggestions.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => addCustomSkill(item)}
+                      className="px-2.5 py-1.5 rounded-xl bg-[#E5DFD9] hover:bg-[#7E4228] hover:text-white text-[#4C271A] text-xs font-bold transition-all flex items-center gap-1 border border-[#7E4228]/20 shadow-xs cursor-pointer active:scale-95"
+                    >
+                      <Plus className="w-3 h-3 text-[#7E4228]" />
+                      <span>{item}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Category Filter Chips */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar -mx-1 px-1">
               {['All', ...SKILL_CATEGORIES.map((c) => c.name)].map((cat) => (
@@ -1148,8 +1277,8 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* STEP 5: Mascot Starter Customization */}
-        {step === 5 && (
+        {/* STEP 7: Mascot Starter Customization */}
+        {step === 7 && (
           <div className="space-y-4 animate-slide-up">
             <div className="text-center">
               <h2 className="text-xl font-black text-[#4C271A] tracking-tight">

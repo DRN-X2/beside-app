@@ -1,6 +1,7 @@
-import React from 'react'
-import { Video, MessageCircle, X, Sparkles } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Video, X, Sparkles, Loader2, AlertCircle } from 'lucide-react'
 import { OtterAvatarWithBadge } from '../../../shared/components/OtterAvatarWithBadge'
+import { sendLiveDuoInvite, onHubEvent } from '../../../services/realtimeHub'
 import type { DemoUser } from '../../../types'
 
 interface DuoMatchModalProps {
@@ -16,15 +17,54 @@ export const DuoMatchModal: React.FC<DuoMatchModalProps> = ({
   onStartVideoCall,
   onClose,
 }) => {
+  const [inviteStatus, setInviteStatus] = useState<'idle' | 'waiting' | 'declined'>('idle')
+
+  useEffect(() => {
+    if (!partner) return
+
+    const unsubAccept = onHubEvent('duo_accepted', (payload) => {
+      if (payload.toUserId === currentUser.id && payload.fromUser?.id === partner.id) {
+        onStartVideoCall(partner)
+      }
+    })
+
+    const unsubDecline = onHubEvent('duo_declined', (payload) => {
+      if (payload.toUserId === currentUser.id && payload.fromUser?.id === partner.id) {
+        setInviteStatus('declined')
+      }
+    })
+
+    return () => {
+      unsubAccept()
+      unsubDecline()
+    }
+  }, [partner, currentUser.id, onStartVideoCall])
+
   if (!partner) return null
+
+  const handleSendInvite = async () => {
+    setInviteStatus('waiting')
+    await sendLiveDuoInvite({
+      toUserId: partner.id,
+      fromUser: currentUser,
+      sessionId: `duo-${Date.now()}`,
+      duration: 30,
+      subject: partner.subjects[0] || 'General Focus',
+    })
+  }
+
+  const handleClose = () => {
+    setInviteStatus('idle')
+    onClose()
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in select-none">
       <div className="w-full max-w-sm clay-card-floating p-6 shadow-2xl relative text-center text-[#2D1B11] animate-slide-up">
         {/* Close Button */}
         <button
-          onClick={onClose}
-          className="absolute top-4 right-4 w-8 h-8 rounded-full clay-btn clay-btn-circle-light flex items-center justify-center text-[#2D1B11]"
+          onClick={handleClose}
+          className="absolute top-4 right-4 w-8 h-8 rounded-full clay-btn clay-btn-circle-light flex items-center justify-center text-[#2D1B11] cursor-pointer"
         >
           <X className="w-4 h-4 stroke-[2.5]" />
         </button>
@@ -74,23 +114,61 @@ export const DuoMatchModal: React.FC<DuoMatchModalProps> = ({
           </span>
         </div>
 
-        {/* Action Buttons */}
-        <div className="space-y-2.5">
-          <button
-            onClick={() => onStartVideoCall(partner)}
-            className="w-full py-3.5 clay-btn clay-btn-primary font-black text-sm text-white shadow-lg flex items-center justify-center gap-2"
-          >
-            <Video className="w-4 h-4 fill-white" />
-            <span>Start Duo Session</span>
-          </button>
+        {/* Action States */}
+        {inviteStatus === 'idle' && (
+          <div className="space-y-2.5">
+            <button
+              onClick={handleSendInvite}
+              className="w-full py-3.5 clay-btn clay-btn-primary font-black text-sm text-white shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98 transition-transform"
+            >
+              <Video className="w-4 h-4 fill-white" />
+              <span>Send Duo Invite</span>
+            </button>
 
-          <button
-            onClick={onClose}
-            className="w-full py-3 clay-btn bg-[#FAF2E6] border border-white/60 font-bold text-xs text-[#2D1B11] shadow-sm"
-          >
-            Keep Exploring
-          </button>
-        </div>
+            <button
+              onClick={handleClose}
+              className="w-full py-3 clay-btn bg-[#FAF2E6] border border-white/60 font-bold text-xs text-[#2D1B11] shadow-sm cursor-pointer"
+            >
+              Keep Exploring
+            </button>
+          </div>
+        )}
+
+        {inviteStatus === 'waiting' && (
+          <div className="clay-inset p-4 rounded-2xl text-center space-y-3">
+            <div className="flex items-center justify-center gap-2 text-[#7E4228]">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-xs font-black">Waiting for {partner.display_name}...</span>
+            </div>
+            <p className="text-[11px] text-[#7A5A46] leading-tight">
+              An invitation was sent to {partner.display_name}. Session starts automatically once accepted.
+            </p>
+            <button
+              onClick={() => setInviteStatus('idle')}
+              className="w-full py-2.5 clay-btn bg-[#FAF2E6] border border-black/10 font-bold text-xs text-[#4C271A] cursor-pointer"
+            >
+              Cancel Invite
+            </button>
+          </div>
+        )}
+
+        {inviteStatus === 'declined' && (
+          <div className="clay-inset p-4 rounded-2xl text-center space-y-3">
+            <div className="flex items-center justify-center gap-1.5 text-amber-700">
+              <AlertCircle className="w-5 h-5" />
+              <span className="text-xs font-black">{partner.display_name} is unavailable</span>
+            </div>
+            <p className="text-[11px] text-[#7A5A46] leading-tight">
+              They couldn't accept the study invite right now. Try connecting with other active learners!
+            </p>
+            <button
+              onClick={handleClose}
+              className="w-full py-2.5 clay-btn clay-btn-primary font-bold text-xs text-white cursor-pointer"
+            >
+              Keep Exploring
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

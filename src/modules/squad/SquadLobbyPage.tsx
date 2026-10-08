@@ -19,9 +19,14 @@ import { OtterAvatarWithBadge } from '../../shared/components/OtterAvatarWithBad
 import { useAuthStore } from '../../store/authStore'
 import { useConnectionStore } from '../../store/connectionStore'
 import { useSessionStore } from '../../store/sessionStore'
-import { DEMO_CURRENT_USER, DEMO_USERS } from '../../data/demoUsers'
+import { useNotificationStore } from '../../store/notificationStore'
+import { fetchLearners } from '../../services/userService'
 import { SquadVideoRoom } from './components/SquadVideoRoom'
+import { sendLiveSquadInvite, subscribeToActiveSession } from '../../services/realtimeHub'
 import type { DemoUser } from '../../types'
+import { supabase } from '../../lib/supabase'
+import { normalizeProfile } from '../../utils/profileNormalizer'
+import { useLocation } from 'react-router-dom'
 
 interface LobbySlot {
   user: DemoUser | null
@@ -37,9 +42,14 @@ interface PendingNotification {
 export const SquadLobbyPage: React.FC = () => {
   const navigate = useNavigate()
   const { profile } = useAuthStore()
-  const currentUser = profile || DEMO_CURRENT_USER
+  if (!profile) return null
+  const currentUser = profile
   const { connections } = useConnectionStore()
   const { setSquadActive } = useSessionStore()
+  const { notifications, togglePanel } = useNotificationStore()
+
+  const location = useLocation()
+  const [squadSessionId, setSquadSessionId] = useState<string | null>(location.state?.lobbyId || null)
 
   // 5 slots matching Mobile Legends team lobby
   const [slots, setSlots] = useState<LobbySlot[]>([
@@ -50,6 +60,68 @@ export const SquadLobbyPage: React.FC = () => {
     { user: null, status: 'empty' },
   ])
 
+  // Fetch participants from DB
+  const fetchParticipants = async (sessionId: string) => {
+    const { data } = await supabase
+      .from('session_participants')
+      .select('*, user:profiles!user_id(*)')
+      .eq('session_id', sessionId)
+      
+    if (data) {
+      setSlots(prev => {
+        const emptySlots: LobbySlot[] = Array(5).fill(null).map(() => ({ user: null, status: 'empty' }))
+        
+        data.forEach((p: any) => {
+           if (p.slot_index !== null && p.slot_index < 5) {
+             const user = normalizeProfile(p.user) as any
+             emptySlots[p.slot_index] = { user, status: p.status }
+           }
+        })
+        
+        // Ensure current user is in the lobby slots visually before they click Join
+        if (!emptySlots.some(s => s.user?.id === currentUser.id)) {
+            const firstEmpty = emptySlots.findIndex(s => s.status === 'empty')
+            if (firstEmpty !== -1) {
+               emptySlots[firstEmpty] = { user: currentUser, status: 'empty' }
+            }
+        }
+        return emptySlots
+      })
+    }
+  }
+
+  useEffect(() => {
+    if (squadSessionId) {
+       fetchParticipants(squadSessionId)
+       
+       const sub = supabase.channel(`lobby-${squadSessionId}`)
+         .on(
+           'postgres_changes', 
+           { event: '*', schema: 'public', table: 'session_participants', filter: `session_id=eq.${squadSessionId}` }, 
+           () => { fetchParticipants(squadSessionId) }
+         )
+         .subscribe()
+         
+       const sessionSub = supabase.channel(`session-${squadSessionId}`)
+         .on(
+           'postgres_changes',
+           { event: 'UPDATE', schema: 'public', table: 'sessions', filter: `id=eq.${squadSessionId}` },
+           (payload) => {
+             if (payload.new.status === 'active') {
+               useSessionStore.getState().setSessionId(squadSessionId)
+               setIsInSession(true)
+             }
+           }
+         )
+         .subscribe()
+         
+       return () => {
+         supabase.removeChannel(sub)
+         supabase.removeChannel(sessionSub)
+       }
+    }
+  }, [squadSessionId, currentUser.id])
+
   // 1-minute countdown timer
   const [timeLeft, setTimeLeft] = useState<number>(60)
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(true)
@@ -57,8 +129,6 @@ export const SquadLobbyPage: React.FC = () => {
   const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null)
   const [isInSession, setIsInSession] = useState<boolean>(false)
 
-  // Interactive peer invite notification simulation
-  const [activeNotification, setActiveNotification] = useState<PendingNotification | null>(null)
   const [autoCommencingCountdown, setAutoCommencingCountdown] = useState<number | null>(null)
   const sessionStartedRef = useRef(false)
 
@@ -108,6 +178,16 @@ export const SquadLobbyPage: React.FC = () => {
   const triggerCommenceSession = () => {
     if (sessionStartedRef.current) return
     sessionStartedRef.current = true
+    
+    if (squadSessionId && slots[0].user?.id === currentUser.id) {
+       const endsAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+       supabase.from('sessions').update({
+          status: 'active',
+          started_at: new Date().toISOString(),
+          ends_at: endsAt
+       }).eq('id', squadSessionId).then()
+    }
+
     setAutoCommencingCountdown(3)
     let count = 3
     const cd = setInterval(() => {
@@ -115,6 +195,9 @@ export const SquadLobbyPage: React.FC = () => {
       if (count <= 0) {
         clearInterval(cd)
         setAutoCommencingCountdown(null)
+        if (squadSessionId) {
+          useSessionStore.getState().setSessionId(squadSessionId)
+        }
         setIsInSession(true)
       } else {
         setAutoCommencingCountdown(count)
@@ -127,19 +210,54 @@ export const SquadLobbyPage: React.FC = () => {
   const secs = timeLeft % 60
   const formattedTimer = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
 
+  const [registeredLearners, setRegisteredLearners] = useState<DemoUser[]>([])
+
+  useEffect(() => {
+    if (currentUser?.id) {
+      fetchLearners(currentUser.id).then(({ data }) => {
+        setRegisteredLearners(data)
+      })
+    }
+  }, [currentUser?.id])
+
   // Connected peers list from store
   const connectedPeers = Object.values(connections)
     .filter((c) => c.status === 'accepted')
     .map((c) => c.user)
-  const availablePeers = connectedPeers.length > 0 ? connectedPeers : DEMO_USERS
+  const availablePeers = connectedPeers.length > 0 ? connectedPeers : registeredLearners
 
   // 1. Current user officially joins the lobby
-  const handleUserJoinLobby = () => {
-    setSlots((prev) => {
-      const next = [...prev]
-      next[0] = { user: currentUser, status: 'joined' }
-      return next
-    })
+  const handleUserJoinLobby = async () => {
+    if (!squadSessionId) {
+      // Create session
+      const { data: session } = await supabase.from('sessions').insert({
+         host_id: currentUser.id,
+         type: 'squad',
+         status: 'waiting',
+         duration_minutes: 60
+      }).select().single()
+      
+      if (session) {
+         setSquadSessionId(session.id)
+         await supabase.from('session_participants').insert({
+            session_id: session.id,
+            user_id: currentUser.id,
+            status: 'joined',
+            slot_index: 0
+         })
+      }
+    } else {
+       // Join existing
+       const mySlot = slots.findIndex(s => s.user?.id === currentUser.id)
+       const index = mySlot !== -1 ? mySlot : 0
+       
+       await supabase.from('session_participants').upsert({
+          session_id: squadSessionId,
+          user_id: currentUser.id,
+          status: 'joined',
+          slot_index: index
+       }, { onConflict: 'session_id,user_id' })
+    }
   }
 
   // 2. Open invite modal for empty slot
@@ -148,9 +266,10 @@ export const SquadLobbyPage: React.FC = () => {
     setShowInviteModal(true)
   }
 
-  // 3. Invite a connected peer (does NOT automatically officially join yet)
-  const handleSendInviteToPeer = (peer: DemoUser) => {
+  // 3. Invite a connected peer (sends real broadcast, does NOT fake-join)
+  const handleSendInviteToPeer = async (peer: DemoUser) => {
     if (slots.some((s) => s.user?.id === peer.id)) return
+    if (!squadSessionId) return
 
     const targetSlot =
       selectedSlotIndex !== null && slots[selectedSlotIndex].user === null
@@ -158,48 +277,24 @@ export const SquadLobbyPage: React.FC = () => {
         : slots.findIndex((s) => s.user === null)
 
     if (targetSlot !== -1) {
-      setSlots((prev) => {
-        const next = [...prev]
-        next[targetSlot] = { user: peer, status: 'invited' }
-        return next
+      await supabase.from('session_participants').insert({
+         session_id: squadSessionId,
+         user_id: peer.id,
+         status: 'invited',
+         slot_index: targetSlot
       })
 
-      // Pop-notification simulating the peer receiving the invite
-      const notif: PendingNotification = {
-        id: `notif-${Date.now()}`,
-        peer,
+      // Send real broadcast invite to peer (pops up on recipient's screen, NOT sender's)
+      await sendLiveSquadInvite({
+        toUserId: peer.id,
+        fromUser: currentUser,
+        lobbyId: squadSessionId, // Real DB ID!
         slotIndex: targetSlot,
-      }
-      setActiveNotification(notif)
-
-      // Simulate peer opening notification & clicking Join in lobby after 2.5s
-      setTimeout(() => {
-        setSlots((currSlots) => {
-          if (currSlots[targetSlot]?.user?.id === peer.id && currSlots[targetSlot]?.status === 'invited') {
-            const next = [...currSlots]
-            next[targetSlot] = { user: peer, status: 'joined' }
-            return next
-          }
-          return currSlots
-        })
-        setActiveNotification((current) => (current?.id === notif.id ? null : current))
-      }, 2500)
+      })
     }
 
     setShowInviteModal(false)
     setSelectedSlotIndex(null)
-  }
-
-  // 4. Peer clicks pop-up notification -> clicks Join on lobby
-  const handlePeerAcceptAndJoin = (notif: PendingNotification) => {
-    setSlots((prev) => {
-      const next = [...prev]
-      if (next[notif.slotIndex]?.user?.id === notif.peer.id) {
-        next[notif.slotIndex] = { user: notif.peer, status: 'joined' }
-      }
-      return next
-    })
-    setActiveNotification(null)
   }
 
   const handleResetTimer = () => {
@@ -233,40 +328,6 @@ export const SquadLobbyPage: React.FC = () => {
 
   return (
     <div className="relative w-full min-h-[100dvh] bg-[#FAF2E6] flex flex-col justify-between p-4 max-w-md mx-auto select-none text-[#2D1B11] pb-28">
-      {/* Top Interactive Invite Pop-Notification Banner */}
-      {activeNotification && (
-        <div className="fixed top-4 left-4 right-4 max-w-md mx-auto z-50 animate-slide-down">
-          <div className="clay-card-floating p-3.5 bg-[#FFF9F2] border-2 border-emerald-400 shadow-2xl flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-9 h-9 rounded-2xl clay-btn-green flex items-center justify-center text-white flex-shrink-0 shadow-md">
-                <Bell className="w-4 h-4 animate-bounce" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-black uppercase text-emerald-800 tracking-wider">
-                    Invite Notification
-                  </span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                </div>
-                <p className="text-xs font-black text-[#2D1B11] truncate">
-                  {activeNotification.peer.display_name} received squad invite!
-                </p>
-                <p className="text-[10px] text-[#7A5A46] font-semibold">
-                  Tap to view notification & join lobby
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={() => handlePeerAcceptAndJoin(activeNotification)}
-              className="clay-btn clay-btn-green text-white text-xs font-black px-3.5 py-2 rounded-xl shadow-md active:scale-95 flex-shrink-0 flex items-center gap-1"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Join</span>
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Auto-Commencing Overlay (When 5 reached or timer finished with 3+) */}
       {autoCommencingCountdown !== null && (
@@ -301,9 +362,23 @@ export const SquadLobbyPage: React.FC = () => {
               Squad Study Lobby
             </h1>
           </div>
-          <div className="clay-btn-amber px-3 py-1.5 rounded-full text-xs font-black flex items-center gap-1.5 shadow-md">
-            <Users className="w-3.5 h-3.5" />
-            <span>{joinedCount}/5 Joined</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={togglePanel}
+              className="w-8 h-8 rounded-full clay-btn clay-btn-circle-light flex items-center justify-center text-[#2D1B11] active:scale-95 transition-all relative cursor-pointer"
+              title="Notifications"
+            >
+              <Bell className="w-3.5 h-3.5 text-[#6B3410]" />
+              {notifications.length > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#E0533C] text-white text-[9px] font-black flex items-center justify-center ring-2 ring-[#FAF2E6] animate-bounce shadow-xs">
+                  {notifications.length}
+                </span>
+              )}
+            </button>
+            <div className="clay-btn-amber px-3 py-1.5 rounded-full text-xs font-black flex items-center gap-1.5 shadow-md">
+              <Users className="w-3.5 h-3.5" />
+              <span>{joinedCount}/5 Joined</span>
+            </div>
           </div>
         </div>
 
@@ -397,19 +472,9 @@ export const SquadLobbyPage: React.FC = () => {
                         Joined
                       </span>
                     ) : slot.status === 'invited' ? (
-                      <button
-                        onClick={() =>
-                          handlePeerAcceptAndJoin({
-                            id: `sim-${idx}`,
-                            peer: slot.user as DemoUser,
-                            slotIndex: idx,
-                          })
-                        }
-                        className="text-[8px] font-black text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-full border border-amber-300 mt-0.5 hover:bg-amber-200 active:scale-95 transition-all shadow-sm"
-                        title="Click to simulate peer clicking notification & joining"
-                      >
+                      <span className="text-[8px] font-black text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300 mt-0.5 animate-pulse">
                         Invited...
-                      </button>
+                      </span>
                     ) : (
                       <span className="text-[8px] font-bold text-[#875F49] mt-0.5">
                         Not Joined

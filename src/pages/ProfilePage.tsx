@@ -20,6 +20,7 @@ import { CountryFlag } from '../shared/components/CountryFlag'
 import { useAuthStore } from '../store/authStore'
 import { useConnectionStore } from '../store/connectionStore'
 import { supabase } from '../lib/supabase'
+import { fetchUserDashboardStats, type UserDashboardStats } from '../services/xpService'
 import type {
   OtterFur,
   OtterEyes,
@@ -96,7 +97,7 @@ const LABELS: Record<string, string> = {
 }
 
 export default function ProfilePage() {
-  const { profile, setProfile, signOut, isDemo } = useAuthStore()
+  const { profile, setProfile, signOut } = useAuthStore()
   const { connections } = useConnectionStore()
   const navigate = useNavigate()
 
@@ -105,8 +106,8 @@ export default function ProfilePage() {
   const [otter, setOtter] = useState((profile as any)?.otter_config || profile?.otter || { fur: 'brown', eyes: 'happy', glasses: 'none', clothing: 'hoodie', accessory: 'none', background: 'cream' })
 
   // Edit Form State (Mandatory & Optional fields)
-  const [username, setUsername] = useState(profile?.username || 'Adrian12')
-  const [displayName, setDisplayName] = useState(profile?.display_name || 'Adrian')
+  const [username, setUsername] = useState(profile?.username || 'user')
+  const [displayName, setDisplayName] = useState(profile?.display_name || 'Student')
   const [category, setCategory] = useState<EducationStatus>(
     (['College', 'Senior High', 'High School', 'Graduated'].includes(profile?.education_status as any)
       ? (profile?.education_status as EducationStatus)
@@ -114,11 +115,11 @@ export default function ProfilePage() {
   )
   const [courseGrade, setCourseGrade] = useState(profile?.degree_program || 'BS Information Technology')
   const [country, setCountry] = useState(profile?.country || 'Philippines')
-  const [city, setCity] = useState(profile?.city || 'Cagayan de Oro')
+  const [city, setCity] = useState(profile?.city || 'Manila')
 
   // Optional fields
-  const [school, setSchool] = useState(profile?.school || 'MSU-IIT')
-  const [yearLevel, setYearLevel] = useState(profile?.year_level || '3rd Year')
+  const [school, setSchool] = useState(profile?.school || 'University')
+  const [yearLevel, setYearLevel] = useState(profile?.year_level || '1st Year')
   const [studyStyle, setStudyStyle] = useState<StudyStyle>(profile?.study_style || 'mixed')
 
   // Ensure default exactly 5 Interests to Learn & 3 Skills
@@ -152,28 +153,31 @@ export default function ProfilePage() {
   const connectedList = Object.values(connections).filter((c) => c.status === 'accepted')
   const connectionCount = connectedList.length
 
-  // User's actual streak (default 0 for fresh live accounts, 14 only in demo mode)
-  const userStreak = isDemo ? (profile.streak ?? 14) : (profile.streak ?? 0)
-  const isFreshAccount = !isDemo && userStreak === 0 && connectionCount === 0
+  const [userStats, setUserStats] = useState<UserDashboardStats | null>(null)
 
-  // GitHub Streak Heatmap calculation (24 weeks of study sessions)
+  React.useEffect(() => {
+    if (profile?.id) {
+      fetchUserDashboardStats(profile.id).then(setUserStats)
+    }
+  }, [profile?.id])
+
+  // User's actual streak from sessions
+  const userStreak = userStats ? userStats.streakDays : (profile.streak ?? 0)
+
+  // GitHub Streak Heatmap calculation (24 weeks of study sessions reflecting real user activity)
   const streakGrid = useMemo(() => {
     const weeks: { date: string; count: number; dayOfWeek: number }[][] = []
-    const today = new Date(2026, 9, 4) // Oct 4, 2026
+    const today = new Date()
     const numWeeks = 24
 
-    // Seed realistic study sessions distribution only for demo mode or active users
-    const activeDayIndices = isFreshAccount
-      ? new Set<number>()
-      : new Set<number>([
-          2, 4, 7, 9, 11, 14, 16, 18, 21, 23, 25, 28, 30, 32, 35, 37, 39, 42,
-          44, 46, 49, 51, 53, 56, 58, 60, 63, 65, 67, 70, 72, 74, 77, 79, 81,
-          84, 86, 88, 91, 93, 95, 98, 100, 102, 105, 107, 109, 112, 114, 116,
-          119, 121, 123, 126, 128, 130, 133, 135, 137, 140, 142, 144, 147, 149,
-          151, 154, 156, 158, 161, 163, 165,
-        ])
+    // Map real sessions count by YYYY-MM-DD
+    const sessionsByDate: Record<string, number> = {}
+    if (userStats?.sessionDates) {
+      for (const d of userStats.sessionDates) {
+        sessionsByDate[d] = (sessionsByDate[d] || 0) + 1
+      }
+    }
 
-    let dayCounter = 0
     for (let w = numWeeks - 1; w >= 0; w--) {
       const weekDays: { date: string; count: number; dayOfWeek: number }[] = []
       for (let d = 0; d < 7; d++) {
@@ -183,28 +187,19 @@ export default function ProfilePage() {
           month: 'short',
           day: 'numeric',
         })
-        const hasSession = activeDayIndices.has(dayCounter % 168)
-        const count = hasSession
-          ? dayCounter % 5 === 0
-            ? 4
-            : dayCounter % 3 === 0
-            ? 3
-            : dayCounter % 2 === 0
-            ? 2
-            : 1
-          : 0
+        const isoDate = dateObj.toISOString().slice(0, 10)
+        const count = sessionsByDate[isoDate] || 0
 
         weekDays.push({
           date: dateStr,
           count,
           dayOfWeek: d,
         })
-        dayCounter++
       }
       weeks.push(weekDays)
     }
     return weeks
-  }, [])
+  }, [userStats])
 
   const toggleInterest = (item: string) => {
     if (interests.includes(item)) {
@@ -258,6 +253,16 @@ export default function ProfilePage() {
 
   const handleSaveProfile = () => {
     if (!isFormValid) return
+    const mergedOtterConfig = {
+      ...(profile?.otter_config || {}),
+      ...otter,
+      education_status: category,
+      degree_program: courseGrade.trim(),
+      school: school.trim(),
+      year_level: yearLevel.trim(),
+      study_style: studyStyle,
+      onboarding_completed: true,
+    }
     const updated = {
       ...profile,
       username: username.trim(),
@@ -270,22 +275,29 @@ export default function ProfilePage() {
       year_level: yearLevel.trim(),
       study_style: studyStyle,
       learning_interests: interests,
+      subjects: interests,
       skills,
       otter,
-      otter_config: otter,
+      otter_config: mergedOtterConfig,
+      onboarding_completed: true,
     }
     setProfile(updated)
     setIsEditing(false)
 
-    if (!isDemo && profile?.id && !profile.id.startsWith('demo-')) {
+    if (profile?.id) {
       (supabase.from('profiles') as any).update({
         username: username.trim(),
         display_name: displayName.trim(),
-        education_status: category,
-        study_style: studyStyle,
-        learning_interests: interests,
-        otter_config: otter,
-      }).eq('id', profile.id).then(() => {})
+        category: category,
+        course_grade: courseGrade.trim(),
+        interests: interests,
+        skills: skills,
+        country: country.trim(),
+        city: city.trim(),
+        otter_config: mergedOtterConfig,
+      }).eq('id', profile.id).then(({ error }: any) => {
+        if (error) console.error('Failed to update profile in database:', error.message)
+      })
     }
   }
 
@@ -671,11 +683,21 @@ export default function ProfilePage() {
 
             <button
               onClick={() => {
-                const updated = { ...profile, otter, otter_config: otter }
+                const mergedOtterConfig = {
+                  ...(profile?.otter_config || {}),
+                  ...otter,
+                  onboarding_completed: true,
+                }
+                const updated = { ...profile, otter, otter_config: mergedOtterConfig }
                 setProfile(updated)
                 setTab('profile')
-                if (!isDemo && profile?.id && !profile.id.startsWith('demo-')) {
-                  (supabase.from('profiles') as any).update({ otter_config: otter }).eq('id', profile.id).then(() => {})
+                if (profile?.id) {
+                  (supabase.from('profiles') as any)
+                    .update({ otter_config: mergedOtterConfig })
+                    .eq('id', profile.id)
+                    .then(({ error }: any) => {
+                      if (error) console.error('Failed to update avatar in database:', error.message)
+                    })
                 }
               }}
               className="w-full py-4 clay-btn clay-btn-green text-white font-display font-black text-sm rounded-2xl shadow-xl flex items-center justify-center gap-2 active:scale-95 transition-all"

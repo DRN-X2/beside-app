@@ -5,11 +5,27 @@ import OtterAvatar from '../components/OtterAvatar'
 import { useConnectionStore } from '../store/connectionStore'
 import { useAuthStore } from '../store/authStore'
 import { getRelationshipLevel, getRelationshipColor, getRelationshipProgress, getNextLevelInfo } from '../services/relationships'
+import { fetchUserDashboardStats, type UserDashboardStats } from '../services/xpService'
 
 export default function StudyHistoryPage() {
   const { connections } = useConnectionStore()
   const { profile } = useAuthStore()
   const navigate = useNavigate()
+  const [stats, setStats] = React.useState<UserDashboardStats>({
+    connectionsCount: 0,
+    sessionsCount: 0,
+    totalHours: 0,
+    totalMinutes: 0,
+    goalsCompleted: 0,
+    streakDays: 0,
+    sessionDates: [],
+  })
+
+  React.useEffect(() => {
+    if (profile?.id) {
+      fetchUserDashboardStats(profile.id).then(setStats)
+    }
+  }, [profile?.id])
 
   if (!profile) return null
 
@@ -17,9 +33,9 @@ export default function StudyHistoryPage() {
     .filter((c) => c.status === 'accepted')
     .sort((a, b) => b.sessionCount - a.sessionCount)
 
-  const totalSessions = partners.reduce((s, c) => s + c.sessionCount, 0)
-  const totalHours = partners.reduce((s, c) => s + c.totalMinutes, 0) / 60
-  const totalGoals = partners.reduce((s, c) => s + c.goalsCompleted, 0)
+  const totalSessions = Math.max(stats.sessionsCount, partners.reduce((s, c) => s + c.sessionCount, 0))
+  const totalHours = Math.max(stats.totalHours, partners.reduce((s, c) => s + c.totalMinutes, 0) / 60)
+  const totalGoals = Math.max(stats.goalsCompleted, partners.reduce((s, c) => s + c.goalsCompleted, 0))
 
   return (
     <div className="min-h-[100dvh] bg-[#F1F1F1] text-[#4C271A] p-4 max-w-md mx-auto select-none pb-28">

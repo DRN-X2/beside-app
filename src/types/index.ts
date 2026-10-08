@@ -56,6 +56,8 @@ export interface Profile {
   xp: number
   streak?: number
   onboarding_completed?: boolean
+  openworld_visible?: boolean
+  otter_config?: any
   created_at: string
   updated_at: string
 }

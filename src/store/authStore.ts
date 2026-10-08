@@ -2,9 +2,11 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { supabase } from '../lib/supabase'
 import type { DemoUser } from '../types'
-import { DEMO_CURRENT_USER, isDemoMode } from '../data/demoUsers'
 import { normalizeProfile } from '../utils/profileNormalizer'
 import { useConnectionStore } from './connectionStore'
+
+export const isValidUuid = (id?: string | null): boolean =>
+  typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 
 interface AuthState {
   user: any | null
@@ -13,10 +15,9 @@ interface AuthState {
   isDemo: boolean
   isNewSignUp: boolean
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
-  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null }>
+  signUp: (email: string, password: string, name?: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
   setProfile: (profile: DemoUser | any) => void
-  enterDemoMode: () => void
   setIsNewSignUp: (val: boolean) => void
 }
 
@@ -30,15 +31,6 @@ export const useAuthStore = create<AuthState>()(
       isNewSignUp: false,
 
       signIn: async (email, password) => {
-        if (isDemoMode()) {
-          set({
-            isDemo: true,
-            isNewSignUp: false,
-            profile: { ...DEMO_CURRENT_USER, onboarding_completed: true },
-            user: { id: DEMO_CURRENT_USER.id, email: DEMO_CURRENT_USER.email },
-          })
-          return { error: null }
-        }
         set({ isLoading: true })
         const { data, error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) {
@@ -46,55 +38,113 @@ export const useAuthStore = create<AuthState>()(
           return { error: error.message }
         }
 
-        // Fetch user profile from Supabase
-        const { data: profileData, error: profileError } = await supabase
+        // Fetch user profile from Supabase safely
+        const { data: profileData } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', data.user.id)
-          .single()
+          .maybeSingle()
+
+        let userProfile = profileData
+        if (!userProfile && data.user) {
+          // Self-heal: profile row was deleted from public.profiles table
+          const initialRow = {
+            id: data.user.id,
+            display_name: data.user.user_metadata?.display_name || 'Student',
+            username: `user_${data.user.id.slice(0, 8)}`,
+            otter_config: {
+              fur: 'brown',
+              eyes: 'happy',
+              glasses: 'none',
+              clothing: 'hoodie',
+              accessory: 'none',
+              background: 'cream',
+              onboarding_completed: false,
+              openworld_visible: true,
+            },
+            openworld_visible: true,
+            xp: 0,
+          }
+          const { data: created } = await (supabase.from('profiles') as any)
+            .upsert(initialRow)
+            .select()
+            .single()
+          userProfile = created || initialRow
+        }
 
         set({
           isLoading: false,
           user: data.user,
-          profile: normalizeProfile(profileData),
+          profile: normalizeProfile(userProfile),
+          isDemo: false,
           isNewSignUp: false,
         })
-        return { error: profileError ? profileError.message : null }
+        return { error: null }
       },
 
       signUp: async (email, password, name) => {
-        if (isDemoMode()) {
-          const newUser: DemoUser = {
-            ...DEMO_CURRENT_USER,
-            email,
-            display_name: name,
-            id: `demo-${Date.now()}`,
-            onboarding_completed: false,
-          }
-          set({ isDemo: true, isNewSignUp: true, profile: newUser, user: { id: newUser.id, email } })
-          return { error: null }
-        }
         set({ isLoading: true })
-        const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { display_name: name } } })
-        
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: name ? { data: { display_name: name } } : undefined,
+        })
+
         if (error) {
           set({ isLoading: false })
           return { error: error.message }
         }
 
-        // Wait a tiny bit for the database trigger to insert the profile before we fetch it
-        await new Promise(resolve => setTimeout(resolve, 600))
-
         let profileData = null
+
         if (data.user) {
-          const { data: pData } = await supabase.from('profiles').select('*').eq('id', data.user.id).single()
-          profileData = pData
+          // Poll up to 3 times with progressive backoff to let the DB trigger insert the profile
+          for (const delay of [300, 600, 1000]) {
+            await new Promise((resolve) => setTimeout(resolve, delay))
+            const { data: pData } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', data.user.id)
+              .single()
+
+            if (pData) {
+              profileData = pData
+              break
+            }
+          }
+
+          // If trigger didn't run, create the initial profile row directly
+          if (!profileData) {
+            const initialRow = {
+              id: data.user.id,
+              display_name: name,
+              username: `user_${data.user.id.slice(0, 8)}`,
+              otter_config: {
+                fur: 'brown',
+                eyes: 'happy',
+                glasses: 'none',
+                clothing: 'hoodie',
+                accessory: 'none',
+                background: 'cream',
+                onboarding_completed: false,
+                openworld_visible: true,
+              },
+              openworld_visible: true,
+              xp: 0,
+            }
+            const { data: upserted } = await (supabase.from('profiles') as any)
+              .upsert(initialRow)
+              .select()
+              .single()
+            profileData = upserted || initialRow
+          }
         }
 
         set({
           isLoading: false,
           user: data.user,
           profile: normalizeProfile(profileData),
+          isDemo: false,
           isNewSignUp: true,
         })
         useConnectionStore.getState().clearConnections()
@@ -102,37 +152,43 @@ export const useAuthStore = create<AuthState>()(
       },
 
       signOut: async () => {
-        if (!isDemoMode()) await supabase.auth.signOut()
+        await supabase.auth.signOut().catch(() => {})
+        const userId = useAuthStore.getState().user?.id
+        if (userId) {
+          localStorage.removeItem(`beside-connections-${userId}`)
+        }
         useConnectionStore.getState().clearConnections()
         set({ user: null, profile: null, isDemo: false, isNewSignUp: false })
       },
 
       setProfile: (profile) => set({ profile: normalizeProfile(profile) }),
 
-      enterDemoMode: () => {
-        useConnectionStore.getState().loadDemoConnections()
-        set({
-          isDemo: true,
-          isNewSignUp: false,
-          profile: { ...DEMO_CURRENT_USER, onboarding_completed: true },
-          user: { id: DEMO_CURRENT_USER.id, email: DEMO_CURRENT_USER.email },
-        })
-      },
-
       setIsNewSignUp: (val) => set({ isNewSignUp: val }),
     }),
     {
       name: 'beside-auth',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ isDemo: state.isDemo, profile: state.profile, user: state.user }),
+      partialize: (state) => ({
+        isDemo: false,
+        profile: state.profile,
+        user: state.user,
+        isNewSignUp: state.isNewSignUp,
+      }),
       onRehydrateStorage: () => (state) => {
-        if (state?.profile) {
-          state.profile = normalizeProfile(state.profile)
-        }
-        if (!state?.isDemo) {
-          const conns = useConnectionStore.getState().connections
-          if (conns && Object.keys(conns).some((k) => k.startsWith('demo-'))) {
-            useConnectionStore.getState().clearConnections()
+        if (state) {
+          if (
+            (state.profile && !isValidUuid(state.profile.id)) ||
+            (state.user && !isValidUuid(state.user.id))
+          ) {
+            console.warn('[authStore] Purging legacy non-UUID auth state from storage')
+            state.profile = null
+            state.user = null
+            state.isDemo = false
+            try {
+              localStorage.removeItem('beside-auth')
+            } catch {}
+          } else if (state.profile) {
+            state.profile = normalizeProfile(state.profile)
           }
         }
       },

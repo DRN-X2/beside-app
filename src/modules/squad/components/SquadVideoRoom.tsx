@@ -4,22 +4,14 @@ import { OtterAvatarWithBadge } from '../../../shared/components/OtterAvatarWith
 import { DraggableObjectivesCard } from '../../duo/components/DraggableObjectivesCard'
 import { useAuthStore } from '../../../store/authStore'
 import { useConnectionStore } from '../../../store/connectionStore'
-import { calculateCompatibility } from '../../../services/compatibility'
-import { DEMO_CURRENT_USER } from '../../../data/demoUsers'
-import { CheckCircle2, Clock, Users, VideoOff, MicOff, Mic, Sparkles, MessageSquare, Award, Check } from 'lucide-react'
+import { CheckCircle2, Clock, Users, VideoOff, MicOff, Mic, Sparkles, MessageSquare, Award, Check, Target } from 'lucide-react'
 import type { DemoUser, DuoObjective } from '../../../types'
+import { useSessionStore } from '../../../store/sessionStore'
+import { supabase } from '../../../lib/supabase'
 
 interface SquadVideoRoomProps {
   teamMembers: DemoUser[]
   onEndSession: () => void
-}
-
-interface SquadChatMessage {
-  id: string
-  senderId: string
-  senderName: string
-  content: string
-  timestamp: Date
 }
 
 export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
@@ -27,83 +19,181 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
   onEndSession,
 }) => {
   const { profile } = useAuthStore()
-  const currentUser = profile || DEMO_CURRENT_USER
-  const { addSessionConnection, connections } = useConnectionStore()
+  if (!profile) return null
+  const currentUser = profile
+  const { connections, sendRequestDB, fetchConnections } = useConnectionStore()
 
-  // Session timer (continuous 30-min block)
-  const [timeLeft, setTimeLeft] = useState(30 * 60)
   const [showEndModal, setShowEndModal] = useState(false)
+  const [showObjectives, setShowObjectives] = useState(false)
   const [activeTab, setActiveTab] = useState<'video' | 'chat'>('video')
-
-  // Local controls
   const [isMuted, setIsMuted] = useState(false)
   const [isCameraOff, setIsCameraOff] = useState(false)
-
-  // Muted states for peers (simulated interactive audio)
   const [peerMutedState, setPeerMutedState] = useState<Record<string, boolean>>({})
-
-  // Topic and 3 objectives (decided together inside the session)
-  const [topic, setTopic] = useState('Group Exam Prep & Problem Solving')
-  const [objectives, setObjectives] = useState<DuoObjective[]>([
-    { id: 'sq-1', text: 'Clarify difficult concepts as a team', completed: false },
-    { id: 'sq-2', text: 'Solve 3 group challenge questions', completed: false },
-    { id: 'sq-3', text: 'Summary review & key takeaways', completed: false },
-  ])
-
-  // In-call chat messages
-  const [messages, setMessages] = useState<SquadChatMessage[]>([
-    {
-      id: 'sq-init',
-      senderId: teamMembers[1]?.id || 'peer',
-      senderName: teamMembers[1]?.display_name || 'Study Mate',
-      content: 'Hey squad! Everyone ready to dive in?',
-      timestamp: new Date(),
-    },
-  ])
+  const [peerCameraState, setPeerCameraState] = useState<Record<string, boolean>>({})
   const [inputMsg, setInputMsg] = useState('')
 
-  // 1-second continuous session clock
+  // Local media stream for current user
+  const localVideoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const [hasMediaPermission, setHasMediaPermission] = useState(false)
+
+  // DB-backed Session State
+  const {
+    sessionId,
+    timeLeft,
+    tick,
+    subject: topic,
+    setSubjectDB,
+    objectives,
+    addObjectiveDB: addObjective,
+    toggleObjectiveDB,
+    removeObjectiveDB: removeObjective,
+    messages,
+    sendMessageDB,
+    endSessionDB,
+  } = useSessionStore()
+
+  // Fetch connections for checking already-connected peers
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          setShowEndModal(true)
-          return 0
+    if (currentUser?.id) {
+      fetchConnections(currentUser.id)
+    }
+  }, [currentUser?.id, fetchConnections])
+
+  // Persistent media stream handling
+  useEffect(() => {
+    let isMounted = true
+
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        })
+        if (!isMounted) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
         }
-        return prev - 1
-      })
-    }, 1000)
-    return () => clearInterval(timer)
+        streamRef.current = stream
+        setHasMediaPermission(true)
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream
+          localVideoRef.current.play().catch(() => {})
+        }
+      } catch (err) {
+        console.warn('[SquadVideoRoom] Media permission issue:', err)
+        setHasMediaPermission(false)
+      }
+    }
+
+    initCamera()
+
+    return () => {
+      isMounted = false
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop())
+        streamRef.current = null
+      }
+    }
   }, [])
 
-  const toggleObjective = (id: string) => {
-    setObjectives((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, completed: !o.completed } : o))
-    )
+  useEffect(() => {
+    if (streamRef.current) {
+      streamRef.current.getVideoTracks().forEach((t) => {
+        t.enabled = !isCameraOff
+      })
+      if (!isCameraOff && localVideoRef.current) {
+        localVideoRef.current.srcObject = streamRef.current
+        localVideoRef.current.play().catch(() => {})
+      }
+    }
+  }, [isCameraOff])
+
+  useEffect(() => {
+    if (streamRef.current) {
+      streamRef.current.getAudioTracks().forEach((t) => {
+        t.enabled = !isMuted
+      })
+    }
+  }, [isMuted])
+
+  // Real-time broadcast for Squad media state
+  const roomId = sessionId || 'squad_room_active'
+
+  useEffect(() => {
+    const channel = supabase.channel(`media_sync_${roomId}`)
+      .on('broadcast', { event: 'media_state_change' }, ({ payload }) => {
+        if (payload && payload.userId && payload.userId !== currentUser.id) {
+          if (typeof payload.isCameraOff === 'boolean') {
+            setPeerCameraState((prev) => ({ ...prev, [payload.userId]: payload.isCameraOff }))
+          }
+          if (typeof payload.isMuted === 'boolean') {
+            setPeerMutedState((prev) => ({ ...prev, [payload.userId]: payload.isMuted }))
+          }
+        }
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [roomId, currentUser.id])
+
+  const broadcastMediaState = (cameraOff: boolean, muted: boolean) => {
+    const channel = supabase.channel(`media_sync_${roomId}`)
+    channel.send({
+      type: 'broadcast',
+      event: 'media_state_change',
+      payload: {
+        userId: currentUser.id,
+        isCameraOff: cameraOff,
+        isMuted: muted,
+      },
+    })
   }
 
-  const addObjective = (text: string) => {
-    if (objectives.length >= 3) return
-    setObjectives((prev) => [...prev, { id: `sq-${Date.now()}`, text, completed: false }])
+  const handleToggleCamera = () => {
+    const next = !isCameraOff
+    setIsCameraOff(next)
+    broadcastMediaState(next, isMuted)
   }
 
-  const removeObjective = (id: string) => {
-    setObjectives((prev) => prev.filter((o) => o.id !== id))
+  const handleToggleMic = () => {
+    const next = !isMuted
+    setIsMuted(next)
+    broadcastMediaState(isCameraOff, next)
   }
+
+  // Fetch session endsAt initially to sync the timer
+  useEffect(() => {
+    if (sessionId) {
+      supabase.from('sessions').select('ends_at').eq('id', sessionId).single().then(({ data }) => {
+        if (data && data.ends_at) {
+          useSessionStore.getState().setEndsAt(new Date(data.ends_at))
+        }
+      })
+    }
+  }, [sessionId])
+
+  // Watch timeLeft for expiration
+  useEffect(() => {
+    if (timeLeft <= 0) {
+      setShowEndModal(true)
+    }
+  }, [timeLeft])
+
+  // Continuous session clock
+  useEffect(() => {
+    const timer = setInterval(() => {
+      tick()
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [tick])
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault()
     if (!inputMsg.trim()) return
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `msg-${Date.now()}`,
-        senderId: currentUser.id,
-        senderName: currentUser.display_name,
-        content: inputMsg.trim(),
-        timestamp: new Date(),
-      },
-    ])
+    sendMessageDB(inputMsg.trim(), currentUser.id, currentUser.display_name)
     setInputMsg('')
   }
 
@@ -113,73 +203,97 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
   const formattedTime = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
   const completedGoalsCount = objectives.filter((o) => o.completed).length
 
-  // Squad layout calculation based on participant count (3, 4, or 5)
+  // Squad layout calculation based on participant count
   const participantCount = teamMembers.length
-  const gridLayoutClass =
-    participantCount === 3
-      ? 'grid grid-cols-2 gap-2' // 2 on top, 1 centered bottom
-      : participantCount === 4
-      ? 'grid grid-cols-2 gap-2' // 2x2 grid
-      : 'grid grid-cols-2 gap-2' // 5 participants (2 top, 2 middle, 1 bottom)
+  const gridLayoutClass = 'grid grid-cols-2 gap-2.5'
+
+  // Unconnected peers count in squad
+  const unconnectedPeers = teamMembers.filter(
+    (m) => m.id !== currentUser.id && connections[m.id]?.status !== 'accepted'
+  )
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#170E08] flex flex-col justify-between p-3 max-w-md mx-auto select-none overflow-hidden text-white font-sans">
-      {/* Top Session Status Bar - Clay Pill Dock */}
-      <div className="flex items-center justify-between px-4 py-2 z-30 clay-dock mb-2 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 bg-[#FAF2E6] flex flex-col justify-between p-3 max-w-md mx-auto select-none overflow-hidden text-[#2D1B11] font-sans">
+      {/* Top Session Status Bar - Clean Beside Cream Dock */}
+      <div className="flex items-center justify-between px-3.5 py-2 z-30 bg-white/95 border border-[#E8DACB] rounded-2xl shadow-sm mb-2 backdrop-blur-md">
         <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse" />
-          <span className="text-xs font-black uppercase tracking-wider text-[#FAF2E6]">
+          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse" />
+          <span className="text-xs font-black uppercase tracking-wider text-[#4C271A]">
             Squad Session
-          </span>
-          <span className="text-[10px] text-amber-300 font-bold flex items-center gap-1">
-            <Users className="w-3 h-3" /> {participantCount}/5
           </span>
         </div>
 
-        {/* Real-Time Continuous Clock - 3D Clay Inset */}
-        <div className="flex items-center gap-1.5 bg-[#FAF2E6] text-[#2D1B11] px-3 py-1 rounded-full text-xs font-black clay-pill">
+        {/* Dynamic Top Bar Goals Indicator */}
+        <button
+          onClick={() => setShowObjectives((prev) => !prev)}
+          className="flex items-center gap-1.5 bg-[#FAF2E6] hover:bg-[#F3E7D5] border border-[#DFC3A6] text-[#4C271A] px-2.5 py-1 rounded-full text-xs font-black transition-all active:scale-95 cursor-pointer shadow-xs"
+          title="Click to view goals"
+        >
+          <Target className="w-3.5 h-3.5 text-[#C68642]" />
+          <span>{completedGoalsCount}/3 Goals</span>
+        </button>
+
+        {/* Dynamic Countdown Timer & Members Pill */}
+        <div className="flex items-center gap-2 bg-[#FAF2E6] text-[#2D1B11] px-2.5 py-1 rounded-full text-xs font-black border border-[#DFC3A6] shadow-xs">
           <Clock className="w-3.5 h-3.5 text-[#8B4513]" />
           <span>{formattedTime}</span>
+          <span className="text-[#875F49]">·</span>
+          <Users className="w-3 h-3 text-[#7A5A46]" />
+          <span className="text-[10px] text-[#7A5A46]">{participantCount}</span>
         </div>
       </div>
 
-      {/* Root-Level Draggable & Dockable Objectives Card - Assigned inside session */}
-      {activeTab === 'video' && (
-        <DraggableObjectivesCard
-          topic={topic}
-          onUpdateTopic={setTopic}
-          objectives={objectives}
-          onToggleObjective={toggleObjective}
-          onAddObjective={addObjective}
-          onRemoveObjective={removeObjective}
-        />
-      )}
+      {/* Floating Draggable Real-Time Objectives Card */}
+      <DraggableObjectivesCard
+        topic={topic}
+        onUpdateTopic={(newTopic) => setSubjectDB(newTopic)}
+        objectives={objectives}
+        onToggleObjective={(id) => {
+          const obj = objectives.find((o) => o.id === id)
+          if (obj) toggleObjectiveDB(id, obj.completed)
+        }}
+        onAddObjective={addObjective}
+        onRemoveObjective={removeObjective}
+        isCollapsed={!showObjectives}
+        onToggleCollapse={() => setShowObjectives((prev) => !prev)}
+      />
 
-      {/* Main Viewport: Multi-Participant Video Grid OR In-Call Group Chat */}
-      <div className="relative flex-1 w-full flex flex-col min-h-0 overflow-y-auto no-scrollbar py-1">
+      {/* Main Study Arena: Tabs between Video Matrix and In-Call Group Chat */}
+      <div className="flex-1 w-full flex flex-col min-h-0 relative mb-2">
         {activeTab === 'video' ? (
-          <div className={`w-full h-full ${gridLayoutClass} auto-rows-fr`}>
-            {teamMembers.map((member, idx) => {
-              const isLocalUser = member.id === currentUser.id
-              const isMute = isLocalUser ? isMuted : !!peerMutedState[member.id]
-              const isCamOff = isLocalUser ? isCameraOff : idx === 2 // give variety
-
-              // If 3 or 5 participants, center the last odd element
-              const isLastOdd =
-                (participantCount === 3 && idx === 2) ||
-                (participantCount === 5 && idx === 4)
+          /* Video Tiles Grid (Google Meet Card Style) */
+          <div className={`flex-1 w-full ${gridLayoutClass} min-h-0 auto-rows-fr`}>
+            {teamMembers.map((member) => {
+              const isSelf = member.id === currentUser.id
+              const isMutedPeer = isSelf ? isMuted : peerMutedState[member.id] || false
+              const isCameraOffPeer = isSelf ? isCameraOff : peerCameraState[member.id] || false
 
               return (
                 <div
                   key={member.id}
-                  className={`relative clay-card-dark rounded-2xl overflow-hidden flex flex-col items-center justify-center p-2 min-h-[140px] border border-white/10 ${
-                    isLastOdd ? 'col-span-2 mx-auto w-full max-w-[240px]' : ''
-                  }`}
+                  className="relative bg-white border border-[#E8DACB] rounded-2xl overflow-hidden shadow-sm flex flex-col items-center justify-center p-2 group transition-all duration-300"
                 >
-                  {isCamOff ? (
-                    /* Camera Off: Big centered Otter avatar, NO BSCS note, NO thick borders */
-                    <div className="flex flex-col items-center justify-center animate-fade-in">
-                      <div className="drop-shadow-lg mb-1">
+                  {isSelf && !isCameraOffPeer ? (
+                    /* Self video feed */
+                    <div className="absolute inset-0 bg-[#251811]">
+                      {hasMediaPermission ? (
+                        <video
+                          ref={localVideoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-full object-cover scale-x-[-1]"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-[#F5EDE3] flex items-center justify-center">
+                          <div className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Centered Avatar on Warm Beige (Google Meet Style) */
+                    <div className="absolute inset-0 bg-[#F5EDE3] flex flex-col items-center justify-center p-2">
+                      <div className="scale-95 drop-shadow-md mb-1">
                         <OtterAvatarWithBadge
                           config={member.otter}
                           countryCode={member.country_code}
@@ -188,104 +302,87 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
                           bgCircleColor="clean"
                         />
                       </div>
-                      <div className="flex items-center gap-1 text-[9px] font-bold text-[#A8826D] bg-[#1A110B]/80 px-2 py-0.5 rounded-full border border-white/10">
-                        <VideoOff className="w-2.5 h-2.5" />
-                        <span>Camera Off</span>
-                      </div>
-                    </div>
-                  ) : (
-                    /* Video Stream Tile */
-                    <div className="relative w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-[#2A1810] to-[#1A0E08] rounded-xl overflow-hidden">
-                      <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_50%_40%,rgba(255,220,180,0.3),transparent_70%)]" />
-                      {/* Corner Mini Avatar */}
-                      <div className="relative z-10 scale-90 drop-shadow-md">
-                        <OtterAvatarWithBadge
-                          config={member.otter}
-                          countryCode={member.country_code}
-                          showDegree={false}
-                          size="sm"
-                          bgCircleColor="clean"
-                        />
-                      </div>
-                      <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded-full text-[9px] font-bold text-emerald-400 border border-emerald-500/20">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        <span>Live</span>
-                      </div>
                     </div>
                   )}
 
-                  {/* Name Label & Country Flag */}
-                  <div className="absolute bottom-2 left-2 z-20 flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-white/10">
-                    <span className="text-[10px] font-black text-[#FAF2E6] truncate max-w-[80px]">
-                      {isLocalUser ? `${member.display_name.split(' ')[0]} (You)` : member.display_name.split(' ')[0]}
-                    </span>
+                  {/* Learner Name & Status Badge */}
+                  <div className="absolute bottom-2 left-2 right-8 z-20">
+                    <div className="bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-xl border border-white/10 max-w-full truncate inline-block">
+                      <span className="font-display font-black text-[11px] text-white truncate block">
+                        {member.display_name} {isSelf && '(You)'}
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Audio Status Orb (mute / unmute indicator) */}
-                  <div className="absolute bottom-2 right-2 z-20">
-                    <button
-                      onClick={() => {
-                        if (!isLocalUser) {
-                          setPeerMutedState((prev) => ({
-                            ...prev,
-                            [member.id]: !prev[member.id],
-                          }))
-                        }
-                      }}
-                      className={`w-6 h-6 rounded-full clay-btn flex items-center justify-center shadow-md transition-all ${
-                        isMute ? 'clay-btn-red text-white' : 'clay-btn-circle-dark text-emerald-400'
+                  {/* Audio Status Pill */}
+                  <div className="absolute top-2 right-2 z-20">
+                    <div
+                      className={`w-6 h-6 rounded-full flex items-center justify-center shadow-xs ${
+                        isMutedPeer ? 'bg-rose-600 text-white' : 'bg-white text-emerald-600 border border-[#DFC3A6]'
                       }`}
-                      title={isMute ? 'Muted' : 'Speaking'}
                     >
-                      {isMute ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
-                    </button>
+                      {isMutedPeer ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                    </div>
                   </div>
+
+                  {/* Camera indicator */}
+                  {isCameraOffPeer && (
+                    <div className="absolute top-2 left-2 z-20 bg-white/80 border border-[#DFC3A6] px-1.5 py-0.5 rounded-full text-[9px] text-[#875F49] flex items-center gap-1 shadow-2xs">
+                      <VideoOff className="w-2.5 h-2.5" />
+                      <span>Off</span>
+                    </div>
+                  )}
                 </div>
               )
             })}
           </div>
         ) : (
-          /* In-Call Group Chat */
-          <div className="w-full h-full flex flex-col justify-between clay-card-floating p-3 text-[#2D1B11]">
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 no-scrollbar mb-2">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[#875F49] block text-center pb-1 border-b border-[#DFC3A6]">
-                Squad Live Chat · {participantCount} Members
-              </span>
-              {messages.map((m) => {
-                const isMe = m.senderId === currentUser.id
-                return (
+          /* Live Squad Group Chat */
+          <div className="flex-1 w-full bg-white border border-[#E8DACB] rounded-3xl flex flex-col overflow-hidden p-3 min-h-0 shadow-md">
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-0">
+              {messages.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center p-4 text-[#A8826D]">
+                  <MessageSquare className="w-8 h-8 mb-2 opacity-50 text-[#C68642]" />
+                  <p className="text-xs font-bold text-[#4C271A]">No chat messages yet.</p>
+                  <p className="text-[10px] text-[#875F49]">Encourage your squad or ask questions here!</p>
+                </div>
+              ) : (
+                messages.map((m) => (
                   <div
                     key={m.id}
-                    className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
+                    className={`flex flex-col ${
+                      m.senderId === currentUser.id ? 'items-end' : 'items-start'
+                    }`}
                   >
-                    <span className="text-[9px] font-black text-[#875F49] mb-0.5 px-1">
-                      {isMe ? 'You' : m.senderName}
+                    <span className="text-[10px] font-bold text-[#875F49] px-1 mb-0.5">
+                      {m.senderName}
                     </span>
                     <div
-                      className={`max-w-[85%] px-3 py-2 rounded-2xl text-xs font-semibold shadow-sm leading-relaxed ${
-                        isMe
-                          ? 'clay-btn-primary text-white rounded-br-sm'
-                          : 'clay-pill bg-[#FAF2E6] text-[#2D1B11] border border-[#DFC3A6] rounded-bl-sm'
+                      className={`px-3 py-1.5 rounded-2xl text-xs max-w-[80%] break-words shadow-2xs ${
+                        m.senderId === currentUser.id
+                          ? 'bg-[#7E4228] text-white rounded-br-xs'
+                          : 'bg-[#FAF2E6] text-[#2D1B11] border border-[#DFC3A6] rounded-bl-xs'
                       }`}
                     >
                       {m.content}
                     </div>
                   </div>
-                )
-              })}
+                ))
+              )}
             </div>
 
-            <form onSubmit={handleSendMessage} className="flex gap-2">
+            {/* In-Call Message Input */}
+            <form onSubmit={handleSendMessage} className="mt-2 flex gap-2 pt-2 border-t border-[#E8DACB]">
               <input
                 type="text"
                 value={inputMsg}
                 onChange={(e) => setInputMsg(e.target.value)}
-                placeholder="Message your squad..."
-                className="flex-1 clay-inset px-3 py-2 text-xs font-black text-[#2D1B11] focus:outline-none placeholder:text-[#A8826D]"
+                placeholder="Message squad members..."
+                className="flex-1 bg-[#FAF2E6] border border-[#DFC3A6] rounded-xl px-3 py-2 text-xs text-[#2D1B11] placeholder-[#875F49] focus:outline-none focus:ring-2 focus:ring-[#C68642]/40"
               />
               <button
                 type="submit"
-                className="clay-btn clay-btn-primary px-4 py-2 rounded-xl text-xs font-black text-white shadow-md"
+                className="px-4 py-2 bg-[#7E4228] hover:bg-[#924D30] text-xs font-black text-white rounded-xl cursor-pointer transition-all active:scale-95 shadow-sm"
               >
                 Send
               </button>
@@ -294,56 +391,54 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
         )}
       </div>
 
-      {/* Bottom Controls Bar */}
-      <div className="pt-2 z-30">
+      {/* Bottom Audio/Video Bar & Controls */}
+      <div className="pt-1 z-30">
         <MeetBottomBar
           isMuted={isMuted}
           isCameraOff={isCameraOff}
           isChatOpen={activeTab === 'chat'}
-          unreadCount={messages.length}
-          onToggleMic={() => setIsMuted((m) => !m)}
-          onToggleCamera={() => setIsCameraOff((c) => !c)}
-          onToggleChat={() => setActiveTab((t) => (t === 'video' ? 'chat' : 'video'))}
+          onToggleMic={handleToggleMic}
+          onToggleCamera={handleToggleCamera}
+          onToggleChat={() => setActiveTab((prev) => (prev === 'chat' ? 'video' : 'chat'))}
           onEndCall={() => setShowEndModal(true)}
         />
       </div>
 
-      {/* End Squad Session Summary & Post-Session Connection Modal */}
+      {/* End Session Confirmation & Post-Session Connection Modal */}
       {showEndModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in select-none">
-          <div className="w-full max-w-sm clay-card-floating p-5 shadow-2xl text-center text-[#2D1B11] animate-slide-up">
-            <div className="w-14 h-14 rounded-full clay-btn-green flex items-center justify-center mx-auto mb-2 text-white shadow-lg">
-              <CheckCircle2 className="w-7 h-7 stroke-[2.5]" />
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4 select-none animate-fade-in">
+          <div className="w-full max-w-sm bg-white border border-[#E8DACB] rounded-3xl p-6 shadow-2xl text-[#2D1B11] animate-slide-up">
+            <div className="text-center mb-4">
+              <div className="w-14 h-14 rounded-full bg-emerald-500 text-white mx-auto flex items-center justify-center mb-2 shadow-lg">
+                <Award className="w-7 h-7" />
+              </div>
+              <h3 className="font-display font-black text-xl text-[#2D1B11]">Session Completed!</h3>
+              <p className="text-xs text-[#7A5A46] font-semibold mt-1">
+                You studied for 30 minutes with your squad.
+              </p>
             </div>
 
-            <h3 className="font-display font-black text-xl mb-1 text-[#2D1B11]">
-              Squad Session Summary
-            </h3>
-            <p className="text-xs text-[#7A5A46] font-medium mb-3">
-              Topic: <span className="font-black text-[#2D1B11]">"{topic}"</span>
-            </p>
-
-            {/* Goals Metric */}
-            <div className="clay-inset p-3 mb-3 text-xs text-left">
-              <div className="flex justify-between font-bold text-[#2D1B11] mb-1">
-                <span>Completed Team Goals</span>
-                <span className="font-black">{completedGoalsCount} of 3</span>
+            {/* Goals Completed Summary */}
+            <div className="bg-[#FAF2E6] border border-[#DFC3A6] p-3 rounded-2xl mb-4">
+              <div className="flex items-center justify-between text-xs font-bold text-[#875F49] mb-1.5">
+                <span>Completed Goals</span>
+                <span>
+                  {completedGoalsCount} of {objectives.length}
+                </span>
               </div>
-              <div className="w-full bg-[#D8C7B5] rounded-full h-2 overflow-hidden mb-2 shadow-inner">
+              <div className="w-full bg-[#E8DACB] rounded-full h-2 overflow-hidden mb-2 shadow-inner">
                 <div
-                  className="bg-emerald-500 h-full rounded-full transition-all shadow-md"
-                  style={{ width: `${(completedGoalsCount / 3) * 100}%` }}
+                  className="bg-emerald-500 h-full rounded-full transition-all shadow-xs"
+                  style={{ width: `${(completedGoalsCount / Math.max(1, objectives.length)) * 100}%` }}
                 />
               </div>
               <div className="space-y-1">
                 {objectives.map((obj) => (
-                  <div key={obj.id} className="flex items-center gap-1.5 text-[10px]">
-                    {obj.completed ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />
-                    ) : (
-                      <span className="w-2.5 h-2.5 rounded-full border border-[#875F49]/50" />
-                    )}
-                    <span className={obj.completed ? 'text-emerald-700 font-bold' : 'text-[#875F49]'}>
+                  <div key={obj.id} className="flex items-center gap-1.5 text-xs text-[#2D1B11]">
+                    <Check
+                      className={`w-3.5 h-3.5 ${obj.completed ? 'text-emerald-600 font-bold' : 'text-[#875F49]/40'}`}
+                    />
+                    <span className={obj.completed ? 'line-through text-[#7A5A46]' : 'font-medium'}>
                       {obj.text}
                     </span>
                   </div>
@@ -352,47 +447,74 @@ export const SquadVideoRoom: React.FC<SquadVideoRoomProps> = ({
             </div>
 
             {/* Post-Session Buddy Connection: Connect after studying! */}
-            <div className="clay-card p-3 mb-3 text-xs border border-[#DFC3A6]">
-              <span className="text-[10px] font-black uppercase text-[#875F49] block mb-1">
-                Study Buddy Connection
-              </span>
-              <p className="text-[11px] text-[#2D1B11] font-semibold">
-                You studied with <strong className="font-black">{participantCount} squad mates</strong>! Would you like to connect as study buddies for future squad sessions?
-              </p>
-            </div>
+            {unconnectedPeers.length > 0 ? (
+              <div className="bg-[#FCFAF7] border border-[#DFC3A6] rounded-2xl p-3 mb-4 text-xs">
+                <span className="text-[10px] font-black uppercase text-[#875F49] block mb-1">
+                  Study Buddy Connection
+                </span>
+                <p className="text-[11px] text-[#2D1B11] font-semibold">
+                  You studied with <strong className="font-black">{participantCount} squad mates</strong>! Connect to study again together!
+                </p>
+              </div>
+            ) : (
+              <div className="bg-[#FCFAF7] border border-emerald-200 rounded-2xl p-3 mb-4 text-xs">
+                <span className="text-[10px] font-black uppercase text-emerald-700 block mb-1">
+                  Squad Buddies ✨
+                </span>
+                <p className="text-xs text-[#2D1B11] font-bold">
+                  You are already connected with all squad members!
+                </p>
+                <p className="text-[11px] text-[#7A5A46] mt-0.5">
+                  Great job learning together! Your XP points and study stats have been updated.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
-              <button
-                onClick={() => {
-                  // Connect with peers who are in the session
-                  teamMembers
-                    .filter((m) => m.id !== currentUser.id)
-                    .forEach((peer) => {
-                      const compat = calculateCompatibility(currentUser, peer)
-                      addSessionConnection(peer, compat, 30, completedGoalsCount)
-                    })
-                  setShowEndModal(false)
-                  onEndSession()
-                }}
-                className="w-full py-3 clay-btn clay-btn-green font-black text-xs text-white shadow-md flex items-center justify-center gap-2"
-              >
-                <Sparkles className="w-4 h-4 fill-white" />
-                <span>Connect with Squad & Exit</span>
-              </button>
+              {unconnectedPeers.length > 0 ? (
+                <>
+                  <button
+                    onClick={async () => {
+                      unconnectedPeers.forEach((peer) => {
+                        sendRequestDB(peer)
+                      })
+                      setShowEndModal(false)
+                      await endSessionDB()
+                      onEndSession()
+                    }}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 font-black text-xs text-white rounded-2xl shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95"
+                  >
+                    <Sparkles className="w-4 h-4 fill-white" />
+                    <span>Connect with New Buddies & Exit</span>
+                  </button>
 
-              <button
-                onClick={() => {
-                  setShowEndModal(false)
-                  onEndSession()
-                }}
-                className="w-full py-2 clay-btn clay-btn-red font-black text-xs text-white"
-              >
-                Leave Without Connecting
-              </button>
+                  <button
+                    onClick={async () => {
+                      setShowEndModal(false)
+                      await endSessionDB()
+                      onEndSession()
+                    }}
+                    className="w-full py-2 bg-rose-600 hover:bg-rose-700 font-black text-xs text-white rounded-2xl transition-all cursor-pointer"
+                  >
+                    Leave Without Connecting
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={async () => {
+                    setShowEndModal(false)
+                    await endSessionDB()
+                    onEndSession()
+                  }}
+                  className="w-full py-3 bg-[#7E4228] hover:bg-[#924D30] font-black text-xs text-white rounded-2xl shadow-md transition-all active:scale-95 cursor-pointer"
+                >
+                  Finish & Exit Session
+                </button>
+              )}
 
               <button
                 onClick={() => setShowEndModal(false)}
-                className="w-full py-2 clay-btn bg-[#FAF2E6] text-[#2D1B11] font-bold text-xs border border-white/60 shadow-sm"
+                className="w-full py-2 bg-[#FAF2E6] hover:bg-[#F3E7D5] text-[#2D1B11] font-bold text-xs rounded-2xl border border-[#DFC3A6] transition-all cursor-pointer"
               >
                 Resume Session
               </button>

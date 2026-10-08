@@ -46,11 +46,6 @@ export const DuoInCallSharedSpace: React.FC<DuoInCallSharedSpaceProps> = ({
     if (hasAnswered) return
     setSelectedOption(key)
     setHasAnswered(true)
-
-    // Simulate partner response shortly after
-    setTimeout(() => {
-      setPartnerAnswer('B')
-    }, 1200)
   }
 
   const handleSendChat = (e: React.FormEvent) => {

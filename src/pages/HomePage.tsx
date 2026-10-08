@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   Users,
   Clock,
@@ -7,15 +7,19 @@ import {
   ChevronRight,
   Sparkles,
   Zap,
+  Bell,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useConnectionStore } from '../store/connectionStore'
 import { useSessionStore } from '../store/sessionStore'
+import { useNotificationStore } from '../store/notificationStore'
 import { useNavigate } from 'react-router-dom'
 import OtterAvatar from '../components/OtterAvatar'
 import { getRelationshipLevel } from '../services/relationships'
-import { DEMO_USERS } from '../data/demoUsers'
 import { calculateCompatibility } from '../services/compatibility'
+import { fetchLearners } from '../services/userService'
+import { fetchUserDashboardStats, type UserDashboardStats } from '../services/xpService'
+import { supabase } from '../lib/supabase'
 import type { DemoUser } from '../types'
 
 function getGreeting() {
@@ -27,9 +31,61 @@ function getGreeting() {
 
 export default function HomePage() {
   const { profile } = useAuthStore()
-  const { connections } = useConnectionStore()
+  const { connections, fetchConnections } = useConnectionStore()
   const { isActive, partner } = useSessionStore()
+  const { notifications, togglePanel } = useNotificationStore()
   const navigate = useNavigate()
+  const [learners, setLearners] = useState<DemoUser[]>([])
+  const [stats, setStats] = useState<UserDashboardStats>({
+    connectionsCount: 0,
+    sessionsCount: 0,
+    totalHours: 0,
+    totalMinutes: 0,
+    goalsCompleted: 0,
+    streakDays: 0,
+    sessionDates: [],
+  })
+
+  const loadDashboardStats = React.useCallback(async () => {
+    if (!profile?.id) return
+    const s = await fetchUserDashboardStats(profile.id)
+    setStats(s)
+  }, [profile?.id])
+
+  useEffect(() => {
+    if (profile?.id) {
+      fetchConnections(profile.id)
+      fetchLearners(profile.id).then(({ data }) => {
+        setLearners(data)
+      })
+      loadDashboardStats()
+    }
+  }, [profile?.id, fetchConnections, loadDashboardStats])
+
+  // Real-time synchronization for stats across users and sessions
+  useEffect(() => {
+    if (!profile?.id) return
+    const channel = supabase
+      .channel(`home-stats-${profile.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'connections' }, () => {
+        loadDashboardStats()
+        fetchConnections(profile.id)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, () => {
+        loadDashboardStats()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_objectives' }, () => {
+        loadDashboardStats()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${profile.id}` }, () => {
+        loadDashboardStats()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [profile?.id, loadDashboardStats, fetchConnections])
 
   if (!profile) {
     return (
@@ -43,18 +99,14 @@ export default function HomePage() {
     )
   }
 
-  // Stats
   const accepted = Object.values(connections).filter((c) => c.status === 'accepted')
-  const totalSessions = accepted.reduce((s, c) => s + c.sessionCount, 0)
-  const totalHours = accepted.reduce((s, c) => s + c.totalMinutes, 0) / 60
-  const totalGoals = accepted.reduce((s, c) => s + c.goalsCompleted, 0)
 
-  // Top compatible users for recommendation section
-  const recommendations = DEMO_USERS
-    .filter((u) => !connections[u.id] || connections[u.id].status === 'rejected')
+  // Real recommendations computed from other registered learners
+  const recommendations = learners
+    .filter((u) => u.id !== profile.id && connections[u.id]?.status !== 'accepted')
     .map((u) => ({ user: u, compat: calculateCompatibility(profile, u) }))
     .sort((a, b) => b.compat.score - a.compat.score)
-    .slice(0, 2)
+    .slice(0, 3)
 
   const xpEarned = typeof profile.xp === 'number' ? profile.xp : 0
   const currentLevel = Math.floor(xpEarned / 500) + 1
@@ -68,11 +120,11 @@ export default function HomePage() {
         <div className="flex items-center justify-between pt-2 pb-3 mb-4 border-b border-[#7E4228]/15">
           <div className="flex items-center gap-2.5">
             {/* Logo on #7E4228 brown background */}
-            <div className="w-10 h-10 rounded-2xl bg-[#7E4228] p-0.5 flex items-center justify-center shadow-sm overflow-hidden border border-[#4C271A]/20">
+            <div className="w-10 h-10 rounded-2xl bg-[#7E4228] p-1 flex items-center justify-center shadow-sm overflow-hidden border border-[#4C271A]/20">
               <img
                 src="/beside-logo.png"
                 alt="Beside Logo"
-                className="w-full h-full object-cover rounded-xl"
+                className="w-full h-full object-contain"
               />
             </div>
             <div className="flex flex-col">
@@ -85,15 +137,31 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* User Profile Avatar Quick Access */}
-          <button
-            onClick={() => navigate('/profile')}
-            className="w-10 h-10 rounded-2xl neu-card flex items-center justify-center p-0.5 active:scale-95 transition-transform relative"
-            title="View Profile"
-          >
-            <OtterAvatar config={(profile as any).otter_config || profile.otter || { fur: 'brown', eyes: 'happy', glasses: 'none', clothing: 'hoodie', accessory: 'none', background: 'cream' }} size="xs" />
-            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#15803D] ring-2 ring-[#F1F1F1]" />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Notification Bell Button */}
+            <button
+              onClick={togglePanel}
+              className="w-10 h-10 rounded-2xl neu-card flex items-center justify-center text-[#4C271A] hover:text-[#7E4228] active:scale-95 transition-all relative cursor-pointer"
+              title="Notifications"
+            >
+              <Bell className="w-5 h-5 stroke-[2.2]" />
+              {notifications.length > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#E0533C] text-white text-[10px] font-black flex items-center justify-center ring-2 ring-[#F1F1F1] animate-bounce shadow-sm">
+                  {notifications.length}
+                </span>
+              )}
+            </button>
+
+            {/* User Profile Avatar Quick Access */}
+            <button
+              onClick={() => navigate('/profile')}
+              className="w-10 h-10 rounded-2xl neu-card flex items-center justify-center p-0.5 active:scale-95 transition-transform relative cursor-pointer"
+              title="View Profile"
+            >
+              <OtterAvatar config={(profile as any).otter_config || profile.otter || { fur: 'brown', eyes: 'happy', glasses: 'none', clothing: 'hoodie', accessory: 'none', background: 'cream' }} size="xs" />
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#15803D] ring-2 ring-[#F1F1F1]" />
+            </button>
+          </div>
         </div>
 
         {/* User Greeting */}
@@ -184,12 +252,12 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* 4. Stats Grid (Sessions, Goals, Partners) */}
+        {/* 4. Stats Grid (Sessions, Goals, Connections) */}
         <div className="grid grid-cols-3 gap-2.5 mb-4">
           {[
-            { label: 'Sessions', value: totalSessions, icon: <Clock className="w-4 h-4 stroke-[2.5]" /> },
-            { label: 'Goals', value: totalGoals, icon: <Target className="w-4 h-4 stroke-[2.5]" /> },
-            { label: 'Partners', value: accepted.length, icon: <Users className="w-4 h-4 stroke-[2.5]" /> },
+            { label: 'Sessions', value: stats.sessionsCount, icon: <Clock className="w-4 h-4 stroke-[2.5]" /> },
+            { label: 'Goals', value: stats.goalsCompleted, icon: <Target className="w-4 h-4 stroke-[2.5]" /> },
+            { label: 'Connections', value: stats.connectionsCount, icon: <Users className="w-4 h-4 stroke-[2.5]" /> },
           ].map((stat) => (
             <div key={stat.label} className="neu-card p-3 text-center">
               <div className="text-[#7E4228] mb-1 flex justify-center">{stat.icon}</div>
@@ -261,7 +329,7 @@ export default function HomePage() {
                   key={user.id}
                   user={user}
                   compat={compat.score}
-                  onConnect={() => navigate('/discover')}
+                  onConnect={() => navigate('/duo', { state: { partner: user } })}
                 />
               ))}
             </div>
@@ -320,9 +388,9 @@ function MiniMatchCard({
         </span>
         <button
           onClick={onConnect}
-          className="neu-btn-primary text-xs font-black py-1.5 px-3.5 whitespace-nowrap"
+          className="neu-btn-primary text-xs font-black py-1.5 px-3.5 whitespace-nowrap cursor-pointer"
         >
-          Connect
+          Study in Duo
         </button>
       </div>
     </div>

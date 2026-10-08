@@ -40,10 +40,11 @@ export function normalizeProfile(raw: any): DemoUser | null {
     ? raw.skills
     : (Array.isArray(config.skills) ? config.skills : [])
 
+  // ONLY trust the explicit database column. Never auto-infer completion
+  // from data presence — that would let users bypass the onboarding flow.
   const isOnboardingDone =
     Boolean(raw.onboarding_completed) ||
-    Boolean(config.onboarding_completed) ||
-    (rawInterests.length >= 3 && rawSkills.length >= 1)
+    Boolean(config.onboarding_completed)
 
   return {
     id: raw.id || `user-${Date.now()}`,
@@ -72,12 +73,14 @@ export function normalizeProfile(raw: any): DemoUser | null {
     xp: typeof raw.xp === 'number' ? raw.xp : (config.xp || 0),
     streak: typeof raw.streak === 'number' ? raw.streak : (config.streak || 0),
     onboarding_completed: isOnboardingDone,
+    openworld_visible: raw.openworld_visible !== false && config.openworld_visible !== false,
     created_at: raw.created_at || new Date().toISOString(),
     updated_at: raw.updated_at || new Date().toISOString(),
     otter: resolvedOtter,
     otter_config: {
       ...resolvedOtter,
       ...config,
+      openworld_visible: raw.openworld_visible !== false && config.openworld_visible !== false,
     },
   } as DemoUser
 }

@@ -3,13 +3,13 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { Home, Users, Earth, Shield } from 'lucide-react'
 import OtterAvatar from './OtterAvatar'
 import { useAuthStore } from '../store/authStore'
-import { DEMO_CURRENT_USER } from '../data/demoUsers'
+import { DEFAULT_OTTER } from '../utils/profileNormalizer'
 
 export default function BottomNav() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { profile } = useAuthStore()
-  const currentUser = profile || DEMO_CURRENT_USER
+  const otterConfig = profile?.otter || DEFAULT_OTTER
 
   const isHomeActive = pathname === '/'
   const isDuoActive = pathname.startsWith('/discover') || pathname.startsWith('/duo')
@@ -18,7 +18,7 @@ export default function BottomNav() {
   const isProfileActive = pathname.startsWith('/profile')
 
   return (
-    <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md z-40 safe-bottom pointer-events-none select-none">
+    <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md z-[1000] safe-bottom pointer-events-none select-none">
       <div className="mx-3 mb-2 relative flex items-center justify-center pointer-events-auto">
         {/* Sleek Neumorphic Dock Bar with 5 evenly balanced slots */}
         <div className="w-full h-[64px] bg-[#F1F1F1] border border-black/5 rounded-[32px] shadow-[5px_5px_14px_rgba(76,39,26,0.08),-5px_-5px_14px_rgba(255,255,255,0.9)] grid grid-cols-5 items-center px-2 relative">
@@ -95,7 +95,7 @@ export default function BottomNav() {
               title="Profile & Otter"
             >
               <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center bg-white/80">
-                <OtterAvatar config={(currentUser as any).otter_config || currentUser.otter || { fur: 'brown', eyes: 'happy', glasses: 'none', clothing: 'hoodie', accessory: 'none', background: 'cream' }} size="xs" />
+                <OtterAvatar config={otterConfig} size="xs" />
               </div>
             </button>
           </div>

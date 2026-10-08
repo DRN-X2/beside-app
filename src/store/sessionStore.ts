@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 import type { SessionDuration, GoalCompletion, DuoObjective, DemoUser } from '../types'
+import { supabase } from '../lib/supabase'
+import { useAuthStore } from './authStore'
+import { awardXP } from '../services/xpService'
 
 export interface ChatMessage {
   id: string
@@ -10,12 +13,14 @@ export interface ChatMessage {
 }
 
 interface SessionState {
+  sessionId: string | null
   isActive: boolean
   partner: DemoUser | null
   subject: string
   duration: SessionDuration
   timeLeft: number
   startedAt: Date | null
+  endsAt: Date | null
   objectives: DuoObjective[]
   messages: ChatMessage[]
   isCompleted: boolean
@@ -23,30 +28,35 @@ interface SessionState {
   isSquadActive: boolean
 
   setSquadActive: (active: boolean) => void
-  startSession: (partner: DemoUser, duration: SessionDuration, initialSubject?: string) => void
+  startSessionLocally: (sessionId: string, partner: DemoUser | null, duration: SessionDuration, startedAt: Date, endsAt: Date) => void
+  syncSessionData: (data: Partial<SessionState>) => void
   setSubject: (subject: string) => void
+  setSubjectDB: (subject: string) => Promise<void>
   setObjectives: (objectives: DuoObjective[]) => void
-  addObjective: (text: string) => void
-  toggleObjective: (id: string) => void
-  removeObjective: (id: string) => void
+  addObjectiveDB: (text: string) => Promise<void>
+  toggleObjectiveDB: (id: string, currentStatus: boolean) => Promise<void>
+  removeObjectiveDB: (id: string) => Promise<void>
+  fetchMessagesDB: (sessionId: string) => Promise<void>
+  sendMessageDB: (content: string, senderId: string, senderName: string) => Promise<void>
+  addMessageRealtime: (msg: ChatMessage) => void
   tick: () => void
-  sendMessage: (content: string, senderId: string, senderName: string) => void
   completeSession: (status: GoalCompletion) => void
   endSession: () => void
+  endSessionDB: () => Promise<void>
+  setSessionId: (id: string) => void
+  setEndsAt: (endsAt: Date) => void
 }
 
-export const useSessionStore = create<SessionState>()((set) => ({
+export const useSessionStore = create<SessionState>()((set, get) => ({
+  sessionId: null,
   isActive: false,
   partner: null,
-  subject: 'Collaborative Study',
+  subject: '',
   duration: 30,
   timeLeft: 30 * 60,
   startedAt: null,
-  objectives: [
-    { id: 'obj-1', text: 'Agree on core topic & scope', completed: true },
-    { id: 'obj-2', text: 'Review key concept notes', completed: false },
-    { id: 'obj-3', text: 'Solve 3 practice questions', completed: false },
-  ],
+  endsAt: null,
+  objectives: [],
   messages: [],
   isCompleted: false,
   completionStatus: null,
@@ -54,75 +64,141 @@ export const useSessionStore = create<SessionState>()((set) => ({
 
   setSquadActive: (isSquadActive) => set({ isSquadActive }),
 
-  startSession: (partner, duration, initialSubject) => set({
+  startSessionLocally: (sessionId, partner, duration, startedAt, endsAt) => set({
+    sessionId,
     isActive: true,
     partner,
-    subject: initialSubject || 'Topic Discussion',
     duration,
-    timeLeft: duration * 60,
-    startedAt: new Date(),
-    objectives: [
-      { id: 'obj-1', text: 'Define today’s study focus', completed: false },
-      { id: 'obj-2', text: 'Review key concepts & exchange notes', completed: false },
-      { id: 'obj-3', text: 'Solve challenge problems together', completed: false },
-    ],
-    messages: [
-      {
-        id: 'msg-welcome',
-        senderId: partner.id,
-        senderName: partner.display_name,
-        content: `Hey! Excited to study together for this ${duration}m block. What should we tackle first?`,
-        timestamp: new Date(),
-      },
-    ],
+    startedAt,
+    endsAt,
+    timeLeft: Math.max(0, Math.floor((endsAt.getTime() - Date.now()) / 1000)),
+    objectives: [],
+    messages: [],
     isCompleted: false,
     completionStatus: null,
   }),
 
+  syncSessionData: (data) => set((state) => ({ ...state, ...data })),
+
   setSubject: (subject) => set({ subject }),
+
+  setSubjectDB: async (subject: string) => {
+    const { sessionId } = get()
+    set({ subject })
+    if (sessionId) {
+      await supabase.from('sessions').update({ subject }).eq('id', sessionId)
+    }
+  },
 
   setObjectives: (objectives) => set({ objectives: objectives.slice(0, 3) }),
 
-  addObjective: (text) => set((state) => {
-    if (state.objectives.length >= 3) return state
-    const newObj: DuoObjective = {
-      id: `obj-${Date.now()}`,
+  addObjectiveDB: async (text) => {
+    const { sessionId, objectives } = get()
+    if (!sessionId || objectives.length >= 3) return
+    await supabase.from('session_objectives').insert({
+      session_id: sessionId,
       text,
-      completed: false,
+      completed: false
+    })
+  },
+
+  toggleObjectiveDB: async (id, currentStatus) => {
+    const isNowCompleted = !currentStatus
+    await supabase.from('session_objectives').update({
+      completed: isNowCompleted,
+      completed_at: isNowCompleted ? new Date().toISOString() : null
+    }).eq('id', id)
+
+    // Award +10 XP for accomplishing an objective!
+    if (isNowCompleted) {
+      const currentUserId = useAuthStore.getState().profile?.id
+      if (currentUserId) {
+        awardXP(currentUserId, 10, 'Objective accomplished')
+      }
     }
-    return { objectives: [...state.objectives, newObj] }
+  },
+
+  removeObjectiveDB: async (id) => {
+    await supabase.from('session_objectives').delete().eq('id', id)
+  },
+
+  fetchMessagesDB: async (sessionId: string) => {
+    if (!sessionId) return
+    const { data } = await supabase
+      .from('session_messages')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true })
+
+    if (data) {
+      const msgs: ChatMessage[] = data.map((row: any) => ({
+        id: row.id,
+        senderId: row.sender_id,
+        senderName: row.sender_name,
+        content: row.content,
+        timestamp: new Date(row.created_at)
+      }))
+      set({ messages: msgs })
+    }
+  },
+
+  sendMessageDB: async (content: string, senderId: string, senderName: string) => {
+    const { sessionId } = get()
+    if (!sessionId || !content.trim()) return
+
+    // Optimistic local add
+    const tempId = `temp-${Date.now()}`
+    set((state) => ({
+      messages: [
+        ...state.messages,
+        {
+          id: tempId,
+          senderId,
+          senderName,
+          content: content.trim(),
+          timestamp: new Date()
+        }
+      ]
+    }))
+
+    // Real DB insertion
+    const { data, error } = await supabase.from('session_messages').insert({
+      session_id: sessionId,
+      sender_id: senderId,
+      sender_name: senderName,
+      content: content.trim()
+    }).select().single()
+
+    if (data) {
+      set((state) => ({
+        messages: state.messages.map((m) => m.id === tempId ? {
+          id: data.id,
+          senderId: data.sender_id,
+          senderName: data.sender_name,
+          content: data.content,
+          timestamp: new Date(data.created_at)
+        } : m)
+      }))
+    }
+  },
+
+  addMessageRealtime: (msg: ChatMessage) => set((state) => {
+    if (state.messages.some((m) => m.id === msg.id)) {
+      return state
+    }
+    return { messages: [...state.messages, msg] }
   }),
-
-  toggleObjective: (id) => set((state) => ({
-    objectives: state.objectives.map((obj) =>
-      obj.id === id ? { ...obj, completed: !obj.completed } : obj
-    ),
-  })),
-
-  removeObjective: (id) => set((state) => ({
-    objectives: state.objectives.filter((obj) => obj.id !== id),
-  })),
 
   tick: () => set((state) => {
-    if (!state.isActive) return state
-    if (state.timeLeft <= 1) {
+    if (!state.isActive || !state.endsAt) return state
+    
+    const timeLeft = Math.max(0, Math.floor((state.endsAt.getTime() - Date.now()) / 1000))
+    
+    if (timeLeft <= 0) {
       return { timeLeft: 0, isActive: false, isCompleted: true, completionStatus: 'completed' }
     }
-    return { timeLeft: state.timeLeft - 1 }
+    return { timeLeft }
   }),
-
-  sendMessage: (content, senderId, senderName) => set((state) => ({
-    messages: [
-      ...state.messages,
-      {
-        id: `msg-${Date.now()}`,
-        senderId,
-        senderName,
-        content,
-        timestamp: new Date(),
-      },
-    ],
-  })),
 
   completeSession: (status) => set({
     isActive: false,
@@ -131,13 +207,40 @@ export const useSessionStore = create<SessionState>()((set) => ({
   }),
 
   endSession: () => set({
+    sessionId: null,
     isActive: false,
     partner: null,
     subject: '',
     timeLeft: 30 * 60,
     startedAt: null,
+    endsAt: null,
     messages: [],
     isCompleted: false,
     completionStatus: null,
+  }),
+
+  endSessionDB: async () => {
+    const { sessionId } = get()
+    if (sessionId) {
+      await supabase.from('sessions').update({
+        status: 'completed',
+        ends_at: new Date().toISOString()
+      }).eq('id', sessionId)
+
+      // Award +10 XP for completing a successful study session!
+      const currentUserId = useAuthStore.getState().profile?.id
+      if (currentUserId) {
+        awardXP(currentUserId, 10, 'Successful study session completed')
+      }
+    }
+    get().endSession()
+  },
+
+  setSessionId: (id: string) => set({ sessionId: id }),
+
+  setEndsAt: (endsAt: Date) => set({
+    endsAt,
+    isActive: true,
+    timeLeft: Math.max(0, Math.floor((endsAt.getTime() - Date.now()) / 1000)),
   }),
 }))

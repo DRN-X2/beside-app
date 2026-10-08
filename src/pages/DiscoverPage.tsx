@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Search, MapPin, BookOpen, Clock, Heart, X, ChevronRight, CheckCircle, Star, Check } from 'lucide-react'
 import OtterAvatar from '../components/OtterAvatar'
-import { DEMO_USERS } from '../data/demoUsers'
+import { fetchLearners } from '../services/userService'
 import { calculateCompatibility, getCompatibilityColor, getCompatibilityLabel } from '../services/compatibility'
 import { useAuthStore } from '../store/authStore'
 import { useConnectionStore } from '../store/connectionStore'
@@ -23,40 +23,52 @@ const DURATION_LABELS: Record<number, string> = {
 
 export default function DiscoverPage() {
   const { profile } = useAuthStore()
-  const { connections, sendRequest } = useConnectionStore()
+  const { connections, sendRequestDB, fetchConnections } = useConnectionStore()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [sentIds, setSentIds] = useState<Set<string>>(new Set())
+  const [learners, setLearners] = useState<DemoUser[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (profile?.id) {
+      setLoading(true)
+      fetchConnections(profile.id)
+      fetchLearners(profile.id).then(({ data }) => {
+        setLearners(data)
+        setLoading(false)
+      })
+    }
+  }, [profile?.id, fetchConnections])
 
   if (!profile) return null
 
-  const users = DEMO_USERS
-    .filter(u => {
+  const users = learners
+    .filter((u) => {
       // Filter out already connected/pending
       const conn = connections[u.id]
       if (conn && (conn.status === 'accepted' || conn.status === 'pending_sent')) return false
       // Search
       if (search) {
         const q = search.toLowerCase()
-        return u.display_name.toLowerCase().includes(q) ||
+        return (
+          u.display_name.toLowerCase().includes(q) ||
           u.degree_program.toLowerCase().includes(q) ||
-          u.subjects.some(s => s.toLowerCase().includes(q)) ||
+          u.subjects.some((s) => s.toLowerCase().includes(q)) ||
           u.city.toLowerCase().includes(q)
+        )
       }
       return true
     })
-    .map(u => ({ user: u, compat: calculateCompatibility(profile, u) }))
+    .map((u) => ({ user: u, compat: calculateCompatibility(profile, u) }))
     .sort((a, b) => b.compat.score - a.compat.score)
 
-  const handleConnect = (user: DemoUser) => {
-    const compat = calculateCompatibility(profile, user)
-    sendRequest(user, compat)
-    setSentIds(prev => new Set([...prev, user.id]))
-    // Simulate auto-accept after 1 second for demo flow
-    setTimeout(() => {
-      useConnectionStore.getState().acceptRequest(user.id)
-    }, 1500)
+  const handleConnect = async (user: DemoUser) => {
+    if (profile) {
+      await sendRequestDB(user)
+      setSentIds((prev) => new Set([...prev, user.id]))
+    }
   }
 
   return (
@@ -70,13 +82,13 @@ export default function DiscoverPage() {
             type="text"
             placeholder="Search by name, subject, program..."
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={(e) => setSearch(e.target.value)}
             className="input-base pl-10 text-sm"
           />
         </div>
       </div>
 
-      <div className="px-4 pt-4 space-y-4">
+      <div className="px-4 pt-4 space-y-4 pb-28">
         {/* Section header */}
         <div className="flex items-center gap-2">
           <Star className="w-4 h-4 text-beside-secondary" />
@@ -139,7 +151,7 @@ function LearnerCard({ user, compat, expanded, onExpand, onConnect, sent, accept
       {/* Main row */}
       <div className="flex items-start gap-3">
         {/* Avatar + status */}
-        <div className="relative flex-shrink-0">
+        <div className="relative shrink-0">
           <OtterAvatar config={user.otter} size="md" />
           <span className={`absolute bottom-0 right-0 w-3.5 h-3.5 ${dotColor} rounded-full border-2 border-white`} />
         </div>
@@ -154,7 +166,7 @@ function LearnerCard({ user, compat, expanded, onExpand, onConnect, sent, accept
               </p>
             </div>
             {/* Compat score */}
-            <div className={`flex-shrink-0 text-xs font-bold px-2.5 py-1 rounded-full border ${compatColorClass}`}>
+            <div className={`shrink-0 text-xs font-bold px-2.5 py-1 rounded-full border ${compatColorClass}`}>
               {compat.score}% match
             </div>
           </div>
@@ -166,7 +178,7 @@ function LearnerCard({ user, compat, expanded, onExpand, onConnect, sent, accept
 
           {/* Subjects */}
           <div className="flex flex-wrap gap-1 mt-2">
-            {user.subjects.slice(0, 3).map(s => (
+            {user.subjects.slice(0, 3).map((s) => (
               <span key={s} className="text-xs bg-cocoa-100 text-beside-primary px-2 py-0.5 rounded-full font-medium">
                 {s}
               </span>
@@ -188,7 +200,7 @@ function LearnerCard({ user, compat, expanded, onExpand, onConnect, sent, accept
       {/* Compatibility reasons */}
       {compat.reasons.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {compat.reasons.map(r => (
+          {compat.reasons.map((r) => (
             <span key={r} className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full flex items-center gap-1">
               <CheckCircle className="w-3 h-3" />
               {r}
@@ -207,7 +219,7 @@ function LearnerCard({ user, compat, expanded, onExpand, onConnect, sent, accept
           <div>
             <p className="text-xs font-semibold text-beside-muted uppercase tracking-wide mb-1">Interests</p>
             <div className="flex flex-wrap gap-1">
-              {user.learning_interests.map(i => (
+              {user.learning_interests.map((i) => (
                 <span key={i} className="text-xs bg-cocoa-100 text-beside-primary px-2 py-0.5 rounded-full">{i}</span>
               ))}
             </div>
@@ -233,7 +245,7 @@ function LearnerCard({ user, compat, expanded, onExpand, onConnect, sent, accept
       <div className="flex gap-2 mt-3">
         <button
           onClick={onExpand}
-          className="btn-ghost flex-1 text-sm py-2"
+          className="btn-ghost flex-1 text-sm py-2 cursor-pointer"
         >
           {expanded ? 'Less' : 'View Profile'}
         </button>
@@ -241,7 +253,7 @@ function LearnerCard({ user, compat, expanded, onExpand, onConnect, sent, accept
         {accepted ? (
           <button
             onClick={onStartDuo}
-            className="btn-secondary flex-1 text-sm py-2 flex items-center justify-center gap-1"
+            className="btn-secondary flex-1 text-sm py-2 flex items-center justify-center gap-1 cursor-pointer"
           >
             <Heart className="w-4 h-4" />
             Study Together
@@ -253,10 +265,10 @@ function LearnerCard({ user, compat, expanded, onExpand, onConnect, sent, accept
           </div>
         ) : (
           <button
-            onClick={onConnect}
-            className="btn-primary flex-1 text-sm py-2 flex items-center justify-center gap-1"
+            onClick={onStartDuo}
+            className="btn-primary flex-1 text-sm py-2 flex items-center justify-center gap-1 cursor-pointer"
           >
-            Connect
+            Study in Duo
             <ChevronRight className="w-4 h-4" />
           </button>
         )}

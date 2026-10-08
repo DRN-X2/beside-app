@@ -1,37 +1,150 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Video, Clock, Users, ArrowLeft, Shield, Sparkles } from 'lucide-react'
+import { Video, ArrowLeft, Loader2, AlertCircle } from 'lucide-react'
 import { DuoVideoRoom } from './components/DuoVideoRoom'
 import { OtterAvatarWithBadge } from '../../shared/components/OtterAvatarWithBadge'
 import { useSessionStore } from '../../store/sessionStore'
 import { useAuthStore } from '../../store/authStore'
-import { DEMO_USERS, DEMO_CURRENT_USER } from '../../data/demoUsers'
+import { sendLiveDuoInvite, onHubEvent, subscribeToActiveSession } from '../../services/realtimeHub'
 import type { DemoUser, SessionDuration } from '../../types'
+import { supabase } from '../../lib/supabase'
 
 export const DuoPage: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
   const { profile } = useAuthStore()
-  const currentUser = profile || DEMO_CURRENT_USER
 
   const {
     isActive,
     partner,
-    startSession,
-    endSession,
+    startSessionLocally,
+    endSessionDB,
   } = useSessionStore()
 
-  // Selected partner fallback to location state or first demo candidate
-  const initialPartner: DemoUser = location.state?.partner || DEMO_USERS[0]
-  const [selectedPartner, setSelectedPartner] = useState<DemoUser>(initialPartner)
+  const partnerFromState: DemoUser | undefined = location.state?.partner
+  const [selectedPartner, setSelectedPartner] = useState<DemoUser | undefined>(partnerFromState || partner || undefined)
   const [selectedDuration, setSelectedDuration] = useState<SessionDuration>(30)
+  const [inviteStatus, setInviteStatus] = useState<'idle' | 'waiting' | 'declined'>('idle')
+  const [createdSessionId, setCreatedSessionId] = useState<string | null>(null)
 
-  const handleStartCall = () => {
-    startSession(selectedPartner, selectedDuration)
+  // Real-time listener for peer accept / decline and session updates
+  useEffect(() => {
+    if (!profile?.id || !selectedPartner) return
+
+    const unsubDecline = onHubEvent('duo_declined', (payload) => {
+      if (payload.toUserId === profile.id && payload.fromUser?.id === selectedPartner.id) {
+        setInviteStatus('declined')
+      }
+    })
+
+    const unsubAccept = onHubEvent('duo_accepted', (payload) => {
+      if (payload.toUserId === profile.id && payload.fromUser?.id === selectedPartner.id) {
+        if (createdSessionId || payload.sessionId) {
+          const sessId = payload.sessionId || createdSessionId
+          subscribeToActiveSession(sessId)
+          startSessionLocally(
+            sessId,
+            selectedPartner,
+            selectedDuration,
+            new Date(),
+            new Date(Date.now() + selectedDuration * 60000)
+          )
+        }
+      }
+    })
+
+    return () => {
+      unsubDecline()
+      unsubAccept()
+    }
+  }, [selectedPartner, profile?.id, selectedDuration, createdSessionId, startSessionLocally])
+
+  // Listen directly to the created session row in Postgres
+  useEffect(() => {
+    if (!createdSessionId || !selectedPartner) return
+
+    const channel = supabase
+      .channel(`duo-session-watch-${createdSessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'sessions',
+          filter: `id=eq.${createdSessionId}`,
+        },
+        (payload) => {
+          const updated = payload.new as any
+          if (updated.status === 'active') {
+            subscribeToActiveSession(createdSessionId)
+            startSessionLocally(
+              createdSessionId,
+              selectedPartner,
+              selectedDuration,
+              new Date(updated.started_at || Date.now()),
+              new Date(updated.ends_at || Date.now() + selectedDuration * 60000)
+            )
+          } else if (updated.status === 'cancelled') {
+            setInviteStatus('declined')
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [createdSessionId, selectedPartner, selectedDuration, startSessionLocally])
+
+  if (!profile) return null
+
+  const currentUser = profile
+
+  const handleStartCall = async () => {
+    if (!selectedPartner) return
+    setInviteStatus('waiting')
+
+    // Create DB session as single source of truth
+    const { data: session, error } = await supabase
+      .from('sessions')
+      .insert({
+        host_id: currentUser.id,
+        type: 'duo',
+        status: 'waiting',
+        duration_minutes: selectedDuration,
+        subject: '',
+      })
+      .select()
+      .single()
+
+    if (error || !session) {
+      console.error('Failed to create session:', error)
+      setInviteStatus('idle')
+      return
+    }
+
+    setCreatedSessionId(session.id)
+
+    // Send real-time invite payload to partner
+    await sendLiveDuoInvite({
+      toUserId: selectedPartner.id,
+      fromUser: currentUser,
+      sessionId: session.id,
+      duration: selectedDuration,
+      subject: '',
+    })
   }
 
-  const handleEndCall = () => {
-    endSession()
+  const handleCancelInvite = async () => {
+    if (createdSessionId) {
+      await supabase.from('sessions').update({ status: 'cancelled' }).eq('id', createdSessionId)
+    }
+    setInviteStatus('idle')
+    setCreatedSessionId(null)
+  }
+
+  const handleEndCall = async () => {
+    await endSessionDB()
     navigate('/history')
   }
 
@@ -46,7 +159,6 @@ export const DuoPage: React.FC = () => {
     )
   }
 
-  // Session Launch / Duration Picker Screen
   return (
     <div className="relative w-full min-h-[100dvh] bg-[#FAF2E6] flex flex-col justify-between p-4 max-w-md mx-auto select-none text-[#2D1B11] pb-24">
       {/* Top Header */}
@@ -74,28 +186,40 @@ export const DuoPage: React.FC = () => {
             Study Partner
           </span>
 
-          <div className="flex items-center gap-4">
-            <div className="drop-shadow-md">
-              <OtterAvatarWithBadge
-                config={selectedPartner.otter}
-                countryCode={selectedPartner.country_code}
-                showDegree={false}
-                size="md"
-                bgCircleColor="clean"
-              />
+          {selectedPartner ? (
+            <div className="flex items-center gap-4">
+              <div className="drop-shadow-md">
+                <OtterAvatarWithBadge
+                  config={selectedPartner.otter}
+                  countryCode={selectedPartner.country_code}
+                  showDegree={false}
+                  size="md"
+                  bgCircleColor="clean"
+                />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-display font-black text-lg text-[#2D1B11] truncate">
+                  {selectedPartner.display_name}
+                </h3>
+                <p className="text-xs text-[#7A5A46] font-semibold truncate">
+                  {selectedPartner.degree_program} · {selectedPartner.school}
+                </p>
+                <span className="inline-block mt-1.5 clay-pill bg-amber-100/90 text-[#8C471E] text-[10px] font-black px-2.5 py-0.5 border border-[#DFC3A6]">
+                  Available for Session
+                </span>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="font-display font-black text-lg text-[#2D1B11] truncate">
-                {selectedPartner.display_name}
-              </h3>
-              <p className="text-xs text-[#7A5A46] font-semibold truncate">
-                {selectedPartner.degree_program} · {selectedPartner.school}
-              </p>
-              <span className="inline-block mt-1.5 clay-pill bg-amber-100/90 text-[#8C471E] text-[10px] font-black px-2.5 py-0.5 border border-[#DFC3A6]">
-                Available for Session
-              </span>
+          ) : (
+            <div className="text-center py-4">
+              <p className="text-xs text-[#7A5A46] mb-3">No partner selected yet.</p>
+              <button
+                onClick={() => navigate('/discover')}
+                className="py-2.5 px-5 clay-btn clay-btn-primary text-xs font-black"
+              >
+                Find a Partner
+              </button>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Duration Selection (15m, 30m, 1h) - 3D Clay Selectors */}
@@ -136,15 +260,55 @@ export const DuoPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Start Video Conference CTA */}
+      {/* Start Video Conference CTA / Live Waiting States */}
       <div className="pt-4">
-        <button
-          onClick={handleStartCall}
-          className="w-full py-4 clay-btn clay-btn-primary font-display font-black text-base rounded-2xl shadow-xl flex items-center justify-center gap-2"
-        >
-          <Video className="w-5 h-5 fill-white" />
-          <span>Start Duo Video Call</span>
-        </button>
+        {inviteStatus === 'idle' && (
+          <button
+            onClick={handleStartCall}
+            disabled={!selectedPartner}
+            className="w-full py-4 clay-btn clay-btn-primary font-display font-black text-base rounded-2xl shadow-xl flex items-center justify-center gap-2 disabled:opacity-40 cursor-pointer active:scale-98 transition-transform"
+          >
+            <Video className="w-5 h-5 fill-white" />
+            <span>Send Duo Study Invite</span>
+          </button>
+        )}
+
+        {inviteStatus === 'waiting' && (
+          <div className="clay-inset p-4 rounded-2xl text-center space-y-3">
+            <div className="flex items-center justify-center gap-2 text-[#7E4228]">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm font-black">
+                Waiting for {selectedPartner?.display_name} to accept...
+              </span>
+            </div>
+            <p className="text-xs text-[#7A5A46]">
+              Invitation sent to {selectedPartner?.display_name}'s screen. The session will begin automatically when accepted.
+            </p>
+            <button
+              onClick={handleCancelInvite}
+              className="w-full py-2.5 clay-btn bg-[#FAF2E6] border border-black/10 font-bold text-xs text-[#4C271A] cursor-pointer"
+            >
+              Cancel Invite
+            </button>
+          </div>
+        )}
+
+        {inviteStatus === 'declined' && (
+          <div className="clay-inset p-4 rounded-2xl text-center space-y-3">
+            <div className="flex items-center justify-center gap-2 text-amber-700">
+              <AlertCircle className="w-5 h-5" />
+              <span className="text-sm font-black">
+                {selectedPartner?.display_name} is unavailable right now
+              </span>
+            </div>
+            <button
+              onClick={() => setInviteStatus('idle')}
+              className="w-full py-2.5 clay-btn clay-btn-primary font-bold text-xs text-white cursor-pointer"
+            >
+              Try Again Later
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
