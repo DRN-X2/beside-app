@@ -64,7 +64,7 @@ export default function ConnectionsPage() {
       {pendingReceived.length > 0 && (
         <div className="mb-6">
           <h2 className="text-xs font-black text-[#7E4228] uppercase tracking-wider mb-3">
-            Study Requests ({pendingReceived.length})
+            Study Requests
           </h2>
           <div className="space-y-3">
             {pendingReceived.map((conn) => (
@@ -108,7 +108,7 @@ export default function ConnectionsPage() {
       {accepted.length > 0 && (
         <div className="mb-6">
           <h2 className="text-xs font-black text-[#7E4228] uppercase tracking-wider mb-3">
-            Study Buddies ({accepted.length})
+            Study Buddies
           </h2>
           <div className="space-y-3">
             {accepted.map((conn) => {

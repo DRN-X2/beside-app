@@ -139,32 +139,33 @@ function makeAvatarIcon(user: OpenWorldUser, isConnected: boolean, isCurrent = f
         "></div>
       ` : ''}
 
-      <!-- YOU badge for current user -->
-      ${isCurrent ? `
-        <div style="
-          position:absolute;
-          bottom:-18px;
-          left:50%;
-          transform:translateX(-50%);
-          background:#7E4228;
-          color:#FFFFFF;
-          font-size:9px;
-          font-weight:900;
-          font-family:Outfit,sans-serif;
-          padding:1px 6px;
-          border-radius:6px;
-          white-space:nowrap;
-          letter-spacing:0.04em;
-          box-shadow:0 2px 4px rgba(0,0,0,0.3);
-          border:1px solid #FAF2E6;
-        ">YOU</div>
-      ` : ''}
+      <!-- Name / YOU label underneath avatar -->
+      <div style="
+        position:absolute;
+        bottom:-20px;
+        left:50%;
+        transform:translateX(-50%);
+        background:${isCurrent ? '#7E4228' : '#FFF9F2'};
+        color:${isCurrent ? '#FFFFFF' : '#4C271A'};
+        font-size:9.5px;
+        font-weight:900;
+        font-family:Outfit,sans-serif;
+        padding:1px 6px;
+        border-radius:6px;
+        white-space:nowrap;
+        letter-spacing:0.03em;
+        box-shadow:0 2px 5px rgba(0,0,0,0.22);
+        border:1px solid ${isCurrent ? '#FAF2E6' : 'rgba(126,66,40,0.25)'};
+        max-width:85px;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      ">${isCurrent ? 'YOU' : (user.display_name.split(' ')[0] || user.username || 'Learner')}</div>
     </div>
   `
   return L.divIcon({
     html,
     className: '',
-    iconSize: [size, isCurrent ? size + 20 : size],
+    iconSize: [size, size + 22],
     iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -size / 2 - 5],
   })
@@ -333,39 +334,43 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
       })
     }
 
-    // Render clusters or individual markers
-    if (zoom < CLUSTER_ZOOM) {
-      clusters.forEach(cluster => {
-        const hasConn = cluster.users.some(u => connectedIds.has(u.id))
-        const icon = makeClusterIcon(cluster, hasConn)
-        const marker = L.marker([cluster.lat, cluster.lng], { icon })
-          .addTo(map)
-          .on('click', () => {
-            if (cluster.users.length === 1) {
-              onSelectUser(cluster.users[0])
-            } else {
-              map.flyTo([cluster.lat, cluster.lng], Math.min(zoom + 3, 10), { duration: 1 })
-              onSelectCluster(cluster)
-            }
-          })
-        markersRef.current.push(marker)
-      })
-    } else {
-      learners.forEach((user, idx) => {
-        const [lat, lng] = getCityLatLng(user.city || '', user.country || '')
-        const jLat = lat + ((idx * 0.003) % 0.012) - 0.006
-        const jLng = lng + ((idx * 0.004) % 0.016) - 0.008
-        const isConnected = connectedIds.has(user.id)
-        const icon = makeAvatarIcon(user, isConnected)
-        const marker = L.marker([jLat, jLng], { icon })
-          .addTo(map)
-          .on('click', () => {
-            map.flyTo([jLat, jLng], Math.max(zoom, 8), { duration: 0.8 })
-            onSelectUser(user)
-          })
-        markersRef.current.push(marker)
-      })
-    }
+    // Always render individual learner avatar pins (NO cluster number badges)
+    // Calculate subtle circular radial offsets for learners sharing the same city coordinates
+    const cityCounts: Record<string, number> = {}
+    learners.forEach(u => {
+      const key = `${(u.city || '').trim().toLowerCase()}_${(u.country || '').trim().toLowerCase()}`
+      cityCounts[key] = (cityCounts[key] || 0) + 1
+    })
+
+    const cityIndex: Record<string, number> = {}
+
+    learners.forEach((user) => {
+      const key = `${(user.city || '').trim().toLowerCase()}_${(user.country || '').trim().toLowerCase()}`
+      const totalInCity = cityCounts[key] || 1
+      const indexInCity = cityIndex[key] || 0
+      cityIndex[key] = indexInCity + 1
+
+      const [baseLat, baseLng] = getCityLatLng(user.city || '', user.country || '')
+      let jLat = baseLat
+      let jLng = baseLng
+
+      if (totalInCity > 1) {
+        const angle = (indexInCity / totalInCity) * 2 * Math.PI
+        const radius = 0.05
+        jLat = baseLat + Math.sin(angle) * radius
+        jLng = baseLng + Math.cos(angle) * (radius / Math.cos((baseLat * Math.PI) / 180 || 1))
+      }
+
+      const isConnected = connectedIds.has(user.id)
+      const icon = makeAvatarIcon(user, isConnected)
+      const marker = L.marker([jLat, jLng], { icon, zIndexOffset: isConnected ? 200 : 100 })
+        .addTo(map)
+        .on('click', () => {
+          map.flyTo([jLat, jLng], Math.max(map.getZoom(), 7), { duration: 0.8 })
+          onSelectUser(user)
+        })
+      markersRef.current.push(marker)
+    })
 
     // Current user marker (always pinned on top)
     if (currentUser) {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { SlidersHorizontal, Search, X, Globe, RefreshCw, Users, MapPin } from 'lucide-react'
+import OtterAvatar from '../../components/OtterAvatar'
 import { LeafletWorldMap } from './components/LeafletWorldMap'
 import { OpenWorldLegend } from './components/OpenWorldLegend'
 import { DiscoveryCard } from './components/DiscoveryCard'
@@ -38,6 +39,10 @@ export const StudyWorldPage: React.FC = () => {
     }
     return ids
   }, [learners])
+
+  const connectedLearners = useMemo(() => {
+    return learners.filter((l) => connectedIds.has(l.id))
+  }, [learners, connectedIds])
 
   const loadData = useCallback(async () => {
     if (!profile?.id) return
@@ -152,12 +157,9 @@ export const StudyWorldPage: React.FC = () => {
               <span className="font-display font-black text-[#2D1B11] text-sm tracking-wide">
                 OpenWorld
               </span>
-              {!loading && (
-                <span className="ml-2 text-[10px] text-[#7E4228] font-bold">
-                  {stats.total} learner{stats.total !== 1 ? 's' : ''} · {stats.countries}{' '}
-                  {stats.countries !== 1 ? 'countries' : 'country'}
-                </span>
-              )}
+              <span className="ml-2 text-[10px] text-[#7E4228] font-bold">
+                Global Study Network
+              </span>
             </div>
           </div>
 
@@ -310,13 +312,24 @@ export const StudyWorldPage: React.FC = () => {
           <div className="flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-[#FFF9F2] border border-[#7E4228]/20 shadow-md">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="text-[10px] font-black text-[#2D1B11]">
-              {stats.available} active
+              Live Map
             </span>
-            <span className="text-[#875F49]/40">·</span>
-            <Users className="w-3 h-3 text-[#7E4228]" />
-            <span className="text-[10px] font-black text-[#7E4228]">
-              {stats.connected} linked
-            </span>
+            {connectedLearners.length > 0 && (
+              <>
+                <span className="text-[#875F49]/40">·</span>
+                <div className="flex items-center -space-x-1.5" title="Connected study buddies">
+                  {connectedLearners.slice(0, 3).map((cu) => (
+                    <div
+                      key={cu.id}
+                      className="w-5 h-5 rounded-full ring-1 ring-[#FFF9F2] overflow-hidden bg-[#4C271A] flex items-center justify-center drop-shadow-2xs"
+                      title={cu.display_name}
+                    >
+                      <OtterAvatar config={cu.otter || cu.otter_config} size="xs" />
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           <button

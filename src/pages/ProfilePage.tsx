@@ -142,7 +142,38 @@ function VisitorProfileView({
           .single()
 
         if (data && isMounted) {
-          setTargetProfile(normalizeProfile(data))
+          const norm = normalizeProfile(data)
+          setTargetProfile(norm)
+
+          // Load connections if not private to render avatars
+          const isPriv = Boolean(norm?.connections_private || norm?.otter_config?.connections_private)
+          if (!isPriv) {
+            const { data: connData } = await supabase
+              .from('connections')
+              .select(`
+                requester_id,
+                recipient_id,
+                status,
+                requester:profiles!requester_id(*),
+                recipient:profiles!recipient_id(*)
+              `)
+              .or(`requester_id.eq.${targetUserId},recipient_id.eq.${targetUserId}`)
+              .eq('status', 'accepted')
+
+            if (connData && isMounted) {
+              const peers: any[] = []
+              for (const row of connData as any[]) {
+                const isRequester = row.requester_id === targetUserId
+                const peerRaw = isRequester ? row.recipient : row.requester
+                if (!peerRaw) continue
+                const peer = normalizeProfile(peerRaw)
+                if (peer && peer.id !== targetUserId) {
+                  peers.push(peer)
+                }
+              }
+              setOtherConnections(peers)
+            }
+          }
         }
       } catch (err) {
         console.error(err)
@@ -174,6 +205,10 @@ function VisitorProfileView({
     targetProfile?.connections_private ||
     targetProfile?.otter_config?.connections_private
   )
+
+  const mutualConnections = useMemo(() => {
+    return otherConnections.filter((p) => connections[p.id]?.status === 'accepted')
+  }, [otherConnections, connections])
 
   const handleOpenConnections = async () => {
     if (isConnectionsPrivate) {
@@ -333,24 +368,50 @@ function VisitorProfileView({
                 )}
               </div>
 
-              {/* Connections Counter Button */}
+              {/* Overlapping Connected Buddies Stack (Just their avatars, NO numbers) */}
               <div className="flex flex-col items-end pb-1">
-                <button
-                  onClick={handleOpenConnections}
-                  className="neu-pill bg-[#EFE7E2] text-[#7E4228] px-3 py-1.5 text-[11px] font-black border border-[#7E4228]/20 flex items-center gap-1.5 active:scale-95 transition-all hover:bg-[#E5DFD9] cursor-pointer"
-                >
-                  {isConnectionsPrivate ? (
-                    <>
-                      <Lock className="w-3.5 h-3.5 stroke-[2.5]" />
-                      <span>Private connections</span>
-                    </>
-                  ) : (
-                    <>
-                      <Users className="w-3.5 h-3.5 stroke-[2.5]" />
-                      <span>Connections</span>
-                    </>
-                  )}
-                </button>
+                {isConnectionsPrivate ? (
+                  <div className="neu-pill bg-[#EFE7E2] text-[#7E4228] px-2.5 py-1 text-[11px] font-black border border-[#7E4228]/20 flex items-center gap-1.5">
+                    <Lock className="w-3 h-3 stroke-[2.5]" />
+                    <span>Private</span>
+                  </div>
+                ) : mutualConnections.length > 0 ? (
+                  <div
+                    onClick={handleOpenConnections}
+                    className="flex items-center -space-x-3 py-1 cursor-pointer active:scale-95 transition-transform"
+                    title="Mutual connections"
+                  >
+                    {mutualConnections.slice(0, 4).map((peer, idx) => {
+                      const bgColors = ['bg-[#15803D]', 'bg-[#2563EB]', 'bg-[#7E4228]', 'bg-[#4C271A]']
+                      return (
+                        <div
+                          key={peer.id}
+                          className={`relative inline-block rounded-full ring-2 ring-[#F1F1F1] drop-shadow-sm p-0.5 ${
+                            bgColors[idx % bgColors.length]
+                          }`}
+                          title={peer.display_name}
+                        >
+                          <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center">
+                            <OtterAvatar config={peer.otter_config || peer.otter} size="xs" />
+                          </div>
+                          {peer.country_code && (
+                            <div className="absolute -bottom-0.5 -right-0.5 scale-75 rounded-full ring-1 ring-white">
+                              <CountryFlag countryCode={peer.country_code} size="xs" />
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleOpenConnections}
+                    className="neu-pill bg-[#EFE7E2] text-[#7E4228] px-2.5 py-1 text-[11px] font-black border border-[#7E4228]/20 flex items-center gap-1.5 active:scale-95 transition-all hover:bg-[#E5DFD9] cursor-pointer"
+                  >
+                    <Users className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Connections</span>
+                  </button>
+                )}
               </div>
             </div>
 
