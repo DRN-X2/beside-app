@@ -29,7 +29,10 @@ export const StudyWorldPage: React.FC = () => {
 
   const currentUser = useMemo<OpenWorldUser | null>(() => {
     if (!profile) return null
-    return { ...profile, openworld_visible: true, connectionStatus: 'NONE' }
+    const isVisible = typeof profile.openworld_visible === 'boolean'
+      ? profile.openworld_visible
+      : profile.otter_config?.openworld_visible !== false
+    return { ...profile, openworld_visible: isVisible, connectionStatus: 'NONE' }
   }, [profile])
 
   const connectedIds = useMemo(() => {

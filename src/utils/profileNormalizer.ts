@@ -47,14 +47,14 @@ export function normalizeProfile(raw: any): DemoUser | null {
     Boolean(config.onboarding_completed)
 
   const isConnectionsPrivate = Boolean(
-    raw.connections_private ??
-    config.connections_private ??
-    false
+    (typeof config.connections_private === 'boolean' ? config.connections_private : false) ||
+    (typeof raw.connections_private === 'boolean' ? raw.connections_private : false)
   )
 
   const isWorldVisible =
-    raw.openworld_visible !== false &&
-    config.openworld_visible !== false
+    typeof raw.openworld_visible === 'boolean'
+      ? raw.openworld_visible
+      : (typeof config.openworld_visible === 'boolean' ? config.openworld_visible : true)
 
   return {
     id: raw.id || `user-${Date.now()}`,

@@ -48,9 +48,9 @@ export async function fetchOpenWorldLearners(currentUserId: string): Promise<{
       }
 
       if (myProfile) {
-        myIsVisible =
-          myProfile.openworld_visible !== false &&
-          myProfile.otter_config?.openworld_visible !== false
+        myIsVisible = typeof myProfile.openworld_visible === 'boolean'
+          ? myProfile.openworld_visible
+          : myProfile.otter_config?.openworld_visible !== false
       }
     }
 
@@ -98,9 +98,9 @@ export async function fetchOpenWorldLearners(currentUserId: string): Promise<{
         const profile = normalizeProfile(raw)
         if (!profile) return null
 
-        const otherIsVisible =
-          raw.openworld_visible !== false &&
-          raw.otter_config?.openworld_visible !== false
+        const otherIsVisible = typeof raw.openworld_visible === 'boolean'
+          ? raw.openworld_visible
+          : raw.otter_config?.openworld_visible !== false
 
         const isConnected = connectedPartnerIds.has(profile.id)
         const conn = connByUser[profile.id]

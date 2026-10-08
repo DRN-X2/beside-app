@@ -414,8 +414,10 @@ export default function OnboardingPage() {
     const finalCity = selectedCity.trim() || 'Manila'
     const countryCode = COUNTRIES.find(c => c.name === finalCountry)?.code || 'PH'
 
-    const isMapVisible = profile?.openworld_visible !== false && profile?.otter_config?.openworld_visible !== false
-    const isConnPrivate = Boolean(profile?.connections_private || profile?.otter_config?.connections_private)
+    const isMapVisible = typeof profile?.openworld_visible === 'boolean'
+      ? profile.openworld_visible
+      : profile?.otter_config?.openworld_visible !== false
+    const isConnPrivate = Boolean(profile?.otter_config?.connections_private || profile?.connections_private)
 
     const fullOtterConfig = {
       ...(profile?.otter_config || {}),

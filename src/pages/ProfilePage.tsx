@@ -770,68 +770,71 @@ export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
-  const [mapVisible, setMapVisible] = useState(
-    profile?.openworld_visible !== false && profile?.otter_config?.openworld_visible !== false
-  )
-  const [connectionsPrivate, setConnectionsPrivate] = useState(
-    Boolean((profile as any)?.connections_private || profile?.otter_config?.connections_private)
-  )
+  const [mapVisible, setMapVisible] = useState(() => {
+    return typeof profile?.openworld_visible === 'boolean'
+      ? profile.openworld_visible
+      : profile?.otter_config?.openworld_visible !== false
+  })
+  const [connectionsPrivate, setConnectionsPrivate] = useState(() => {
+    return Boolean(profile?.otter_config?.connections_private || (profile as any)?.connections_private)
+  })
 
   useEffect(() => {
     if (profile) {
-      setMapVisible(profile.openworld_visible !== false && profile.otter_config?.openworld_visible !== false)
-      setConnectionsPrivate(Boolean((profile as any)?.connections_private || profile.otter_config?.connections_private))
+      const isVisible = typeof profile.openworld_visible === 'boolean'
+        ? profile.openworld_visible
+        : profile.otter_config?.openworld_visible !== false
+      setMapVisible(isVisible)
+      setConnectionsPrivate(Boolean(profile.otter_config?.connections_private || (profile as any)?.connections_private))
     }
-  }, [profile])
+  }, [profile?.id, profile?.openworld_visible, profile?.otter_config?.connections_private, profile?.otter_config?.openworld_visible])
 
   const handleToggleMapVisibility = async () => {
     if (!profile?.id) return
     const next = !mapVisible
     setMapVisible(next)
+    const nextOtterConfig = {
+      ...(profile.otter_config || {}),
+      openworld_visible: next,
+    }
     const updated = {
       ...profile,
       openworld_visible: next,
-      otter_config: { ...profile.otter_config, openworld_visible: next },
+      otter_config: nextOtterConfig,
     }
     setProfile(updated)
-    await supabase.from('profiles').update({
-      openworld_visible: next,
-      otter_config: updated.otter_config,
-    }).eq('id', profile.id)
+
+    try {
+      await supabase.from('profiles').update({
+        openworld_visible: next,
+        otter_config: nextOtterConfig,
+      }).eq('id', profile.id)
+    } catch (err) {
+      console.error('Failed to update map visibility:', err)
+    }
   }
 
   const handleToggleConnectionsPrivate = async () => {
     if (!profile?.id) return
     const next = !connectionsPrivate
     setConnectionsPrivate(next)
-    const updatedOtterConfig = {
+    const nextOtterConfig = {
       ...(profile.otter_config || {}),
       connections_private: next,
     }
     const updated = {
       ...profile,
       connections_private: next,
-      otter_config: updatedOtterConfig,
+      otter_config: nextOtterConfig,
     }
     setProfile(updated)
 
     try {
-      const { error } = await supabase.from('profiles').update({
-        connections_private: next,
-        otter_config: updatedOtterConfig,
+      await supabase.from('profiles').update({
+        otter_config: nextOtterConfig,
       }).eq('id', profile.id)
-
-      if (error) {
-        await supabase.from('profiles').update({
-          otter_config: updatedOtterConfig,
-        }).eq('id', profile.id)
-      }
-    } catch {
-      try {
-        await supabase.from('profiles').update({
-          otter_config: updatedOtterConfig,
-        }).eq('id', profile.id)
-      } catch {}
+    } catch (err) {
+      console.error('Failed to update connections privacy:', err)
     }
   }
 
@@ -1039,6 +1042,7 @@ export default function ProfilePage() {
           skills: skills,
           country: country.trim(),
           city: city.trim(),
+          openworld_visible: mapVisible,
           otter_config: mergedOtterConfig,
         }).eq('id', profile.id)
 
@@ -1051,6 +1055,7 @@ export default function ProfilePage() {
             skills: skills,
             country: country.trim(),
             city: city.trim(),
+            openworld_visible: mapVisible,
             otter_config: mergedOtterConfig,
           }).eq('id', profile.id)
         }
@@ -1823,14 +1828,22 @@ export default function ProfilePage() {
                   <button
                     type="button"
                     onClick={handleToggleMapVisibility}
-                    className={`w-13 h-7 rounded-full p-1 transition-all duration-200 cursor-pointer flex items-center ${
-                      mapVisible
-                        ? 'bg-[#7E4228] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.35),inset_-1px_-1px_3px_rgba(255,255,255,0.15)] justify-end'
-                        : 'bg-[#E4E4E4] shadow-[inset_2px_2px_5px_rgba(76,39,26,0.12),inset_-2px_-2px_5px_rgba(255,255,255,0.85)] justify-start'
+                    className={`relative w-12 h-7 rounded-full p-1 transition-colors duration-200 cursor-pointer flex items-center ${
+                      mapVisible ? 'bg-[#7E4228]' : 'bg-[#D6CDC4]'
                     }`}
+                    style={{
+                      boxShadow: 'inset 2px 2px 4px rgba(76,39,26,0.25), inset -2px -2px 4px rgba(255,255,255,0.85)',
+                    }}
                     aria-label="Toggle OpenMap Visibility"
                   >
-                    <div className="w-5 h-5 rounded-full bg-[#F1F1F1] border border-white/70 shadow-[2px_2px_5px_rgba(76,39,26,0.22),-1px_-1px_3px_rgba(255,255,255,0.95)] transition-all duration-200" />
+                    <div
+                      className={`w-5 h-5 rounded-full bg-white transition-transform duration-200 ${
+                        mapVisible ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                      style={{
+                        boxShadow: '2px 2px 4px rgba(76,39,26,0.22), -1px -1px 2px rgba(255,255,255,0.95)',
+                      }}
+                    />
                   </button>
                 </div>
                 <p className="text-[11px] text-[#7E4228] font-medium leading-relaxed">
@@ -1853,14 +1866,22 @@ export default function ProfilePage() {
                   <button
                     type="button"
                     onClick={handleToggleConnectionsPrivate}
-                    className={`w-13 h-7 rounded-full p-1 transition-all duration-200 cursor-pointer flex items-center ${
-                      connectionsPrivate
-                        ? 'bg-[#7E4228] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.35),inset_-1px_-1px_3px_rgba(255,255,255,0.15)] justify-end'
-                        : 'bg-[#E4E4E4] shadow-[inset_2px_2px_5px_rgba(76,39,26,0.12),inset_-2px_-2px_5px_rgba(255,255,255,0.85)] justify-start'
+                    className={`relative w-12 h-7 rounded-full p-1 transition-colors duration-200 cursor-pointer flex items-center ${
+                      connectionsPrivate ? 'bg-[#7E4228]' : 'bg-[#D6CDC4]'
                     }`}
+                    style={{
+                      boxShadow: 'inset 2px 2px 4px rgba(76,39,26,0.25), inset -2px -2px 4px rgba(255,255,255,0.85)',
+                    }}
                     aria-label="Toggle Connections Privacy"
                   >
-                    <div className="w-5 h-5 rounded-full bg-[#F1F1F1] border border-white/70 shadow-[2px_2px_5px_rgba(76,39,26,0.22),-1px_-1px_3px_rgba(255,255,255,0.95)] transition-all duration-200" />
+                    <div
+                      className={`w-5 h-5 rounded-full bg-white transition-transform duration-200 ${
+                        connectionsPrivate ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                      style={{
+                        boxShadow: '2px 2px 4px rgba(76,39,26,0.22), -1px -1px 2px rgba(255,255,255,0.95)',
+                      }}
+                    />
                   </button>
                 </div>
                 <p className="text-[11px] text-[#7E4228] font-medium leading-relaxed">
