@@ -50,12 +50,24 @@ export const CreateSquadModal: React.FC<CreateSquadModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const trimmedObjectives = objectives.map((o) => o.trim()).filter((o) => o.length > 0)
 
-    if (!name.trim() || !focus.trim() || trimmedObjectives.length === 0) {
-      setError('Please provide Squad name, main topic, and at least one objective.')
+    if (!name.trim()) {
+      setError('Squad Name is required.')
       return
     }
+
+    if (!focus.trim()) {
+      setError('Main Focus / Topic is required.')
+      return
+    }
+
+    const hasEmptyObjective = objectives.some((o) => !o.trim())
+    if (hasEmptyObjective || objectives.length === 0) {
+      setError('All objective fields are required. Please fill in each objective or remove empty ones.')
+      return
+    }
+
+    const trimmedObjectives = objectives.map((o) => o.trim())
 
     setIsSubmitting(true)
     setError(null)
@@ -113,10 +125,12 @@ export const CreateSquadModal: React.FC<CreateSquadModalProps> = ({
           {/* Squad Name */}
           <div>
             <label className="block text-[11px] font-black uppercase text-[#7E4228] tracking-wider mb-1">
-              Squad Name *
+              Squad Name <span className="text-rose-600 font-black">*</span>
             </label>
             <input
               type="text"
+              required
+              aria-required="true"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Algorithm Sprints, Organic Chemistry Review"
@@ -128,10 +142,12 @@ export const CreateSquadModal: React.FC<CreateSquadModalProps> = ({
           {/* Focus / Topic */}
           <div>
             <label className="block text-[11px] font-black uppercase text-[#7E4228] tracking-wider mb-1">
-              Main Focus / Topic *
+              Main Focus / Topic <span className="text-rose-600 font-black">*</span>
             </label>
             <input
               type="text"
+              required
+              aria-required="true"
               value={focus}
               onChange={(e) => setFocus(e.target.value)}
               placeholder="e.g. Data Structures, Web Development, Microeconomics"
@@ -144,7 +160,7 @@ export const CreateSquadModal: React.FC<CreateSquadModalProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-[11px] font-black uppercase text-[#7E4228] tracking-wider">
-                Learning Objectives (Up to 3) *
+                Learning Objectives (Up to 3) <span className="text-rose-600 font-black">*</span>
               </label>
               <span className="text-[10px] font-bold text-[#875F49]">
                 {objectives.length}/3
@@ -159,9 +175,11 @@ export const CreateSquadModal: React.FC<CreateSquadModalProps> = ({
                   </div>
                   <input
                     type="text"
+                    required
+                    aria-required="true"
                     value={obj}
                     onChange={(e) => handleObjectiveChange(idx, e.target.value)}
-                    placeholder={idx === 0 ? 'Primary objective (e.g. Solve graph BFS/DFS)' : `Optional objective ${idx + 1}`}
+                    placeholder={idx === 0 ? 'Primary objective (Required)' : `Objective ${idx + 1} (Required)`}
                     maxLength={100}
                     className="flex-1 px-3.5 py-2 rounded-2xl bg-[#FAF2E6] border border-[#7E4228]/20 text-[#2D1B11] text-xs font-semibold placeholder:text-[#875F49]/50 focus:outline-hidden focus:border-[#7E4228] shadow-[inset_2px_2px_4px_rgba(126,66,40,0.1),inset_-2px_-2px_4px_rgba(255,255,255,0.9)] transition-all"
                   />
@@ -199,7 +217,7 @@ export const CreateSquadModal: React.FC<CreateSquadModalProps> = ({
           <div>
             <label className="block text-[11px] font-black uppercase text-[#7E4228] tracking-wider mb-1.5 flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 text-[#7E4228]" />
-              <span>Session Duration</span>
+              <span>Session Duration <span className="text-rose-600 font-black">*</span></span>
             </label>
             <div className="grid grid-cols-3 gap-2">
               {[
@@ -226,7 +244,7 @@ export const CreateSquadModal: React.FC<CreateSquadModalProps> = ({
           {/* Lobby Visibility (Public vs Private) */}
           <div>
             <label className="block text-[11px] font-black uppercase text-[#7E4228] tracking-wider mb-1.5">
-              Lobby Visibility
+              Lobby Visibility <span className="text-rose-600 font-black">*</span>
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -265,8 +283,8 @@ export const CreateSquadModal: React.FC<CreateSquadModalProps> = ({
           <div className="pt-2">
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="w-full py-3.5 bg-[#7E4228] hover:bg-[#924D30] text-white font-black text-sm rounded-2xl shadow-[4px_4px_12px_rgba(126,66,40,0.25),-2px_-2px_6px_rgba(255,255,255,0.7)] border border-white/20 transition-all active:scale-98 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+              disabled={isSubmitting || !name.trim() || !focus.trim() || objectives.some((o) => !o.trim())}
+              className="w-full py-3.5 bg-[#7E4228] hover:bg-[#924D30] text-white font-black text-sm rounded-2xl shadow-[4px_4px_12px_rgba(126,66,40,0.25),-2px_-2px_6px_rgba(255,255,255,0.7)] border border-white/20 transition-all active:scale-98 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Sparkles className="w-4 h-4 fill-white" />
               <span>{isSubmitting ? 'Assembling Squad...' : 'Assemble Squad & Enter Lobby'}</span>
