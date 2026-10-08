@@ -251,14 +251,11 @@ export const COUNTRY_CENTERS_LATLNG: Record<string, [number, number]> = {
   'Bangladesh': [23.6850, 90.3563],
 }
 
+import { getCityLatLngSync } from '../services/geocodingService'
+
 /** Resolve city real-world WGS84 [lat, lng]. Falls back to country center or default [20, 0]. */
 export function getCityLatLng(city: string, country: string): [number, number] {
-  const cityKey = city?.trim() || ''
-  if (CITY_COORDINATES[cityKey]) {
-    return [CITY_COORDINATES[cityKey].lat, CITY_COORDINATES[cityKey].lng]
-  }
-  const countryKey = country?.trim() || ''
-  return COUNTRY_CENTERS_LATLNG[countryKey] || [20, 0]
+  return getCityLatLngSync(city, country)
 }
 
 /** Resolve city legacy SVG coordinates. */

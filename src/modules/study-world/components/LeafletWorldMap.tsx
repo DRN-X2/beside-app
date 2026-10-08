@@ -3,7 +3,11 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { OpenWorldUser } from '../../../services/openWorldService'
 import { renderToString } from 'react-dom/server'
-import { getCityLatLng } from '../../../data/worldLocations'
+import {
+  getCityLatLngSync,
+  geocodeCityAsync,
+  PRECISE_CITY_REGISTRY,
+} from '../../../services/geocodingService'
 import OtterAvatar from '../../../components/OtterAvatar'
 
 // Fix Leaflet default icon path issue with bundlers
@@ -43,24 +47,14 @@ function getStatusColor(status: string) {
   return STATUS_COLORS[status] || STATUS_COLORS.offline
 }
 
-function clusterLearners(learners: OpenWorldUser[]): ClusterGroup[] {
-  const groups: Record<string, ClusterGroup> = {}
-  for (const user of learners) {
-    const city = user.city || 'Unknown'
-    const country = user.country || 'Unknown'
-    const key = `${city}__${country}`
-    const [lat, lng] = getCityLatLng(city, country)
-    if (!groups[key]) {
-      groups[key] = { city, country, lat, lng, users: [] }
-    }
-    groups[key].users.push(user)
-  }
-  return Object.values(groups)
-}
-
-function makeAvatarIcon(user: OpenWorldUser, isConnected: boolean, isCurrent = false): L.DivIcon {
+function makeAvatarIcon(
+  user: OpenWorldUser,
+  isConnected: boolean,
+  isCurrent = false,
+  hasNodeConnection = false
+): L.DivIcon {
   const sc = getStatusColor(user.online_status || (isCurrent ? 'online' : 'offline'))
-  const size = 40 // Uniform size for all avatars on OpenWorld
+  const size = 42 // Uniform size for all avatars on OpenWorld
   const otterHtml = renderToString(<OtterAvatar config={user.otter_config || user.otter} size="xs" animate={false} />)
   const flagCode = (user.country_code || '').toLowerCase()
 
@@ -71,7 +65,19 @@ function makeAvatarIcon(user: OpenWorldUser, isConnected: boolean, isCurrent = f
       height:${size}px;
       cursor:pointer;
     ">
-      <!-- Minimal status ring without pulsating animation -->
+      <!-- Node Graph Connection Anchor Glow Ring -->
+      ${hasNodeConnection ? `
+        <div class="beside-node-halo" style="
+          position:absolute;
+          inset:-7px;
+          border-radius:50%;
+          border:2px dashed rgba(224, 82, 66, 0.75);
+          box-shadow:0 0 12px rgba(224, 82, 66, 0.4);
+          pointer-events:none;
+        "></div>
+      ` : ''}
+
+      <!-- Status ring -->
       <div style="
         position:absolute;
         inset:-2.5px;
@@ -90,7 +96,7 @@ function makeAvatarIcon(user: OpenWorldUser, isConnected: boolean, isCurrent = f
         display:flex;
         align-items:center;
         justify-content:center;
-        box-shadow:0 2px 8px rgba(126,66,40,0.3);
+        box-shadow:0 3px 10px rgba(126,66,40,0.3);
         overflow:hidden;
         position:relative;
       ">
@@ -171,95 +177,121 @@ function makeAvatarIcon(user: OpenWorldUser, isConnected: boolean, isCurrent = f
   })
 }
 
-function makeClusterIcon(cluster: ClusterGroup, hasConnection: boolean): L.DivIcon {
-  const count = cluster.users.length
-  const size = Math.min(50, 38 + Math.log2(count) * 3.5)
-  const html = `
-    <div style="
-      position:relative;
-      width:${size}px;
-      height:${size}px;
-      cursor:pointer;
-    ">
-      <!-- Minimal clean ring -->
-      <div style="
-        position:absolute;
-        inset:-3px;
-        border-radius:50%;
-        border:2px solid ${hasConnection ? '#E05242' : '#7E4228'};
-        opacity:0.4;
-      "></div>
-      <div style="
-        width:${size}px;
-        height:${size}px;
-        border-radius:50%;
-        background:linear-gradient(135deg,#7E4228,#924D30);
-        border:2px solid #FAF2E6;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-family:Outfit,Inter,sans-serif;
-        font-weight:900;
-        font-size:${count > 9 ? 12 : 13}px;
-        color:#FFFFFF;
-        box-shadow:0 3px 10px rgba(126,66,40,0.35);
-      ">${count > 99 ? '99+' : count}</div>
-      <div style="
-        position:absolute;
-        bottom:-17px;
-        left:50%;
-        transform:translateX(-50%);
-        font-size:10px;
-        font-weight:800;
-        font-family:Outfit,sans-serif;
-        color:#4C271A;
-        white-space:nowrap;
-        text-shadow:0 1px 2px rgba(255,255,255,0.8);
-        max-width:90px;
-        overflow:hidden;
-        text-overflow:ellipsis;
-      ">${cluster.city}</div>
-    </div>
-  `
-  return L.divIcon({
-    html,
-    className: '',
-    iconSize: [size, size + 20],
-    iconAnchor: [size / 2, size / 2],
-    popupAnchor: [0, -size / 2 - 5],
-  })
-}
-
 export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
   learners,
   currentUser,
   connectedIds,
   onSelectUser,
-  onSelectCluster,
 }) => {
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<L.Marker[]>([])
   const linesRef = useRef<L.Polyline[]>([])
-  const [currentZoom, setCurrentZoom] = useState<number>(3)
+  const [customCoords, setCustomCoords] = useState<Record<string, [number, number]>>({})
 
-  const clusters = useMemo(() => clusterLearners(learners), [learners])
+  // Deduplicated list of all participants (current user + other learners)
+  const allParticipants = useMemo(() => {
+    const map = new Map<string, OpenWorldUser>()
+    if (currentUser) {
+      map.set(currentUser.id, currentUser)
+    }
+    learners.forEach(l => {
+      if (!map.has(l.id)) {
+        map.set(l.id, l)
+      }
+    })
+    return Array.from(map.values())
+  }, [currentUser, learners])
+
   const connectedLearners = useMemo(
     () => learners.filter(u => connectedIds.has(u.id)),
     [learners, connectedIds]
   )
 
-  // Initialize Map
+  // Asynchronous high-precision city geocoding for any city not in the offline registry
+  useEffect(() => {
+    let isMounted = true
+
+    allParticipants.forEach(user => {
+      const city = user.city?.trim()
+      const country = user.country?.trim() || 'Philippines'
+      if (!city) return
+
+      const key = city.toLowerCase()
+      // Skip if already in customCoords or static registry
+      if (customCoords[user.id] || PRECISE_CITY_REGISTRY[key]) return
+
+      geocodeCityAsync(city, country).then(coords => {
+        if (!isMounted) return
+        setCustomCoords(prev => {
+          const cur = prev[user.id]
+          if (cur && cur[0] === coords[0] && cur[1] === coords[1]) return prev
+          return { ...prev, [user.id]: coords }
+        })
+      })
+    })
+
+    return () => {
+      isMounted = false
+    }
+  }, [allParticipants, customCoords])
+
+  // Exact node graph coordinates calculation
+  // Group by base coordinate; if multiple users are in the same city, apply a tight micro-offset (~850m)
+  // so they sit side-by-side cleanly without ever leaving city limits.
+  const nodePositions = useMemo(() => {
+    const positions = new Map<string, [number, number]>()
+    const coordGroups: Record<string, OpenWorldUser[]> = {}
+
+    allParticipants.forEach(user => {
+      const custom = customCoords[user.id]
+      const [baseLat, baseLng] = custom || getCityLatLngSync(user.city || '', user.country || '')
+      const groupKey = `${baseLat.toFixed(3)}_${baseLng.toFixed(3)}`
+      if (!coordGroups[groupKey]) coordGroups[groupKey] = []
+      coordGroups[groupKey].push(user)
+    })
+
+    Object.values(coordGroups).forEach(group => {
+      if (group.length === 1) {
+        const u = group[0]
+        const [lat, lng] = customCoords[u.id] || getCityLatLngSync(u.city || '', u.country || '')
+        positions.set(u.id, [lat, lng])
+      } else {
+        // Arrange multiple learners in neat micro-orbit
+        const total = group.length
+        const [centerLat, centerLng] =
+          customCoords[group[0].id] || getCityLatLngSync(group[0].city || '', group[0].country || '')
+        const radius = 0.0085 // ~900 meters
+
+        group.forEach((u, idx) => {
+          const angle = (idx / total) * 2 * Math.PI - Math.PI / 2
+          const lat = centerLat + Math.sin(angle) * radius
+          const lng = centerLng + Math.cos(angle) * (radius / Math.cos((centerLat * Math.PI) / 180 || 1))
+          positions.set(u.id, [lat, lng])
+        })
+      }
+    })
+
+    return positions
+  }, [allParticipants, customCoords])
+
+  // Keep a ref to nodePositions for instant center/flyTo without re-renders
+  const nodePositionsRef = useRef(nodePositions)
+  useEffect(() => {
+    nodePositionsRef.current = nodePositions
+  }, [nodePositions])
+
+  // Initialize Leaflet Map
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
-    const defaultCenter: [number, number] = currentUser?.city && currentUser?.country
-      ? getCityLatLng(currentUser.city, currentUser.country)
-      : [15, 120]
+    const initialCenter: [number, number] = currentUser?.city && currentUser?.country
+      ? getCityLatLngSync(currentUser.city, currentUser.country)
+      : [14.5995, 120.9842]
 
     const map = L.map(containerRef.current, {
-      center: defaultCenter,
-      zoom: 4,
+      center: initialCenter,
+      zoom: 6,
       minZoom: 2,
       maxZoom: 16,
       zoomControl: false,
@@ -281,118 +313,92 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
 
     L.control.attribution({ position: 'bottomleft', prefix: '© Esri, HERE' }).addTo(map)
 
-    const onZoom = () => {
-      setCurrentZoom(map.getZoom())
-    }
-    map.on('zoomend', onZoom)
-
     mapRef.current = map
     return () => {
-      map.off('zoomend', onZoom)
       map.remove()
       mapRef.current = null
     }
   }, [])
 
-  // Update markers and glowing red network lines
+  // Update Markers and Node Graph Network Edges
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
 
-    // Clear old markers and lines
+    // 1. Clear old markers and network lines
     markersRef.current.forEach(m => m.remove())
     markersRef.current = []
     linesRef.current.forEach(l => l.remove())
     linesRef.current = []
 
-    const zoom = currentZoom
-    const CLUSTER_ZOOM = 7
-
-    // Draw glowing red network lines between connected study buddies
-    if (currentUser) {
-      const [curLat, curLng] = getCityLatLng(currentUser.city || '', currentUser.country || '')
+    // 2. Render Node Graph Edges (Connections between study buddies)
+    // CRITICAL: We only draw edges strictly between actual resolved node positions (posA -> posB).
+    if (currentUser && nodePositions.has(currentUser.id)) {
+      const currentPos = nodePositions.get(currentUser.id)!
 
       connectedLearners.forEach(cu => {
-        const [lat, lng] = getCityLatLng(cu.city || '', cu.country || '')
+        const buddyPos = nodePositions.get(cu.id)
+        // Only connect if the buddy exists and has an active node on the map
+        if (!buddyPos) return
 
-        // Soft outer glow polyline
-        const glowLine = L.polyline([[curLat, curLng], [lat, lng]], {
+        // Soft outer ambient glow line (wide, semi-transparent)
+        const glowLine = L.polyline([currentPos, buddyPos], {
           color: '#E05242',
           weight: 6,
           opacity: 0.28,
+          lineCap: 'round',
         }).addTo(map)
         linesRef.current.push(glowLine)
 
-        // Core glowing red line
-        const coreLine = L.polyline([[curLat, curLng], [lat, lng]], {
+        // Core glowing laser line with animated pulse dash
+        const coreLine = L.polyline([currentPos, buddyPos], {
           color: '#E05242',
           weight: 2.4,
-          opacity: 0.9,
-          dashArray: '6 4',
+          opacity: 0.95,
+          dashArray: '8, 6',
+          className: 'beside-node-edge-pulse',
+          lineCap: 'round',
         }).addTo(map)
         linesRef.current.push(coreLine)
       })
     }
 
-    // Always render individual learner avatar pins (NO cluster number badges)
-    // Calculate subtle circular radial offsets for learners sharing the same city coordinates
-    const cityCounts: Record<string, number> = {}
-    learners.forEach(u => {
-      const key = `${(u.city || '').trim().toLowerCase()}_${(u.country || '').trim().toLowerCase()}`
-      cityCounts[key] = (cityCounts[key] || 0) + 1
-    })
+    // 3. Render Avatar Nodes
+    allParticipants.forEach(user => {
+      const pos = nodePositions.get(user.id)
+      if (!pos) return
 
-    const cityIndex: Record<string, number> = {}
-
-    learners.forEach((user) => {
-      const key = `${(user.city || '').trim().toLowerCase()}_${(user.country || '').trim().toLowerCase()}`
-      const totalInCity = cityCounts[key] || 1
-      const indexInCity = cityIndex[key] || 0
-      cityIndex[key] = indexInCity + 1
-
-      const [baseLat, baseLng] = getCityLatLng(user.city || '', user.country || '')
-      let jLat = baseLat
-      let jLng = baseLng
-
-      if (totalInCity > 1) {
-        const angle = (indexInCity / totalInCity) * 2 * Math.PI
-        const radius = 0.05
-        jLat = baseLat + Math.sin(angle) * radius
-        jLng = baseLng + Math.cos(angle) * (radius / Math.cos((baseLat * Math.PI) / 180 || 1))
-      }
-
+      const isCurrent = user.id === currentUser?.id
       const isConnected = connectedIds.has(user.id)
-      const icon = makeAvatarIcon(user, isConnected)
-      const marker = L.marker([jLat, jLng], { icon, zIndexOffset: isConnected ? 200 : 100 })
+      const hasNodeConnection = isConnected || (isCurrent && connectedLearners.length > 0)
+
+      const icon = makeAvatarIcon(user, isConnected, isCurrent, hasNodeConnection)
+      const marker = L.marker(pos, {
+        icon,
+        zIndexOffset: isCurrent ? 1000 : (isConnected ? 500 : 200),
+      })
         .addTo(map)
         .on('click', () => {
-          map.flyTo([jLat, jLng], Math.max(map.getZoom(), 7), { duration: 0.8 })
-          onSelectUser(user)
+          map.flyTo(pos, Math.max(map.getZoom(), 7), { duration: 0.8 })
+          if (!isCurrent) {
+            onSelectUser(user)
+          }
         })
       markersRef.current.push(marker)
     })
-
-    // Current user marker (always pinned on top)
-    if (currentUser) {
-      const [lat, lng] = getCityLatLng(currentUser.city || '', currentUser.country || '')
-      const icon = makeAvatarIcon(currentUser, false, true)
-      const marker = L.marker([lat, lng], { icon, zIndexOffset: 1000 })
-        .addTo(map)
-        .on('click', () => {
-          map.flyTo([lat, lng], 7, { duration: 0.8 })
-        })
-      markersRef.current.push(marker)
-    }
-  }, [learners, clusters, connectedLearners, connectedIds, currentUser, currentZoom, onSelectUser, onSelectCluster])
+  }, [allParticipants, nodePositions, connectedLearners, connectedIds, currentUser, onSelectUser])
 
   const zoomIn = useCallback(() => mapRef.current?.zoomIn(), [])
   const zoomOut = useCallback(() => mapRef.current?.zoomOut(), [])
   const resetView = useCallback(() => {
-    if (currentUser?.city && currentUser?.country) {
-      const coords = getCityLatLng(currentUser.city, currentUser.country)
-      mapRef.current?.flyTo(coords, 5, { duration: 1.2 })
+    if (currentUser?.id && nodePositionsRef.current.has(currentUser.id)) {
+      const coords = nodePositionsRef.current.get(currentUser.id)!
+      mapRef.current?.flyTo(coords, 7, { duration: 1.0 })
+    } else if (currentUser?.city && currentUser?.country) {
+      const coords = getCityLatLngSync(currentUser.city, currentUser.country)
+      mapRef.current?.flyTo(coords, 7, { duration: 1.0 })
     } else {
-      mapRef.current?.flyTo([15, 120], 4, { duration: 1.2 })
+      mapRef.current?.flyTo([14.5995, 120.9842], 5, { duration: 1.0 })
     }
   }, [currentUser])
 
@@ -401,6 +407,34 @@ export const LeafletWorldMap: React.FC<LeafletWorldMapProps> = ({
       <style>{`
         .beside-warm-map-tiles {
           filter: sepia(0.28) saturate(0.85) contrast(0.96) brightness(0.99) !important;
+        }
+
+        @keyframes besideLaserFlow {
+          from {
+            stroke-dashoffset: 28;
+          }
+          to {
+            stroke-dashoffset: 0;
+          }
+        }
+
+        .beside-node-edge-pulse {
+          animation: besideLaserFlow 1.8s linear infinite;
+        }
+
+        @keyframes besideHaloPulse {
+          0%, 100% {
+            transform: scale(1);
+            opacity: 0.75;
+          }
+          50% {
+            transform: scale(1.08);
+            opacity: 1;
+          }
+        }
+
+        .beside-node-halo {
+          animation: besideHaloPulse 2.4s ease-in-out infinite;
         }
       `}</style>
 
