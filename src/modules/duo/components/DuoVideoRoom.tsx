@@ -217,6 +217,11 @@ export const DuoVideoRoom: React.FC<DuoVideoRoomProps> = ({
           setPartnerDisconnectedNotice(true)
         }
       },
+      onIceStateChange: (iceState) => {
+        if (iceState === 'connected' || iceState === 'completed') {
+          setPartnerDisconnectedNotice(false)
+        }
+      },
     })
 
     rtcRef.current = rtc

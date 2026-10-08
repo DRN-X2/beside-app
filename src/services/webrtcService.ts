@@ -11,6 +11,7 @@ export interface WebRTCConfig {
   onPeerActive?: () => void
   onMediaStateChange?: (state: { isCameraOff: boolean; isMuted: boolean }) => void
   onConnectionStateChange?: (state: RTCPeerConnectionState) => void
+  onIceStateChange?: (state: RTCIceConnectionState) => void
 }
 
 const ICE_SERVERS: RTCConfiguration = {
@@ -44,6 +45,7 @@ export class WebRTCConnection {
     this.config = config
     // The peer with the alphabetically larger ID is "polite" (yields on collision)
     this.isPolite = this.config.userId > this.config.peerId
+    console.log(`[WebRTC] Initialized. User: ${config.userId.slice(0, 8)} Peer: ${config.peerId.slice(0, 8)} Polite: ${this.isPolite}`)
     this.init()
   }
 
@@ -55,6 +57,7 @@ export class WebRTCConnection {
       if (this.config.localStream) {
         this.config.localStream.getTracks().forEach((track) => {
           if (this.pc && this.config.localStream) {
+            console.log(`[WebRTC] Added initial track: ${track.kind}`)
             this.pc.addTrack(track, this.config.localStream)
           }
         })
@@ -71,20 +74,24 @@ export class WebRTCConnection {
 
       // Handle receiving remote tracks
       this.pc.ontrack = (event) => {
-        if (event.track) {
+        console.log(`[WebRTC] ontrack fired! Track: ${event.track?.kind}`)
+        if (event.streams && event.streams[0]) {
+          this.config.onRemoteStream(event.streams[0])
+        } else if (event.track) {
           this.remoteStream.addTrack(event.track)
           // Clone stream wrapper so React state detection triggers a proper re-render
           const activeStream = new MediaStream(this.remoteStream.getTracks())
           this.config.onRemoteStream(activeStream)
-          if (this.config.onPeerActive) {
-            this.config.onPeerActive()
-          }
+        }
+        if (this.config.onPeerActive) {
+          this.config.onPeerActive()
         }
       }
 
       // Handle ICE candidates
       this.pc.onicecandidate = (event) => {
         if (event.candidate) {
+          console.log(`[WebRTC] Generated ICE candidate: ${event.candidate.protocol} ${event.candidate.type}`)
           this.broadcastOrQueue('webrtc_candidate', {
             senderId: this.config.userId,
             candidate: event.candidate.toJSON(),
@@ -97,6 +104,7 @@ export class WebRTCConnection {
         if (!this.pc || this.isDestroyed || this.pc.signalingState !== 'stable') return
         try {
           this.makingOffer = true
+          console.log('[WebRTC] onnegotiationneeded creating offer...')
           const offer = await this.pc.createOffer()
           if (this.pc.signalingState !== 'stable') return
           await this.pc.setLocalDescription(offer)
@@ -114,10 +122,25 @@ export class WebRTCConnection {
       this.pc.onconnectionstatechange = () => {
         if (!this.pc) return
         const state = this.pc.connectionState
+        console.log(`[WebRTC] Connection state: ${state}`)
         if (this.config.onConnectionStateChange) {
           this.config.onConnectionStateChange(state)
         }
         if (state === 'connected') {
+          if (this.config.onPeerActive) {
+            this.config.onPeerActive()
+          }
+        }
+      }
+
+      this.pc.oniceconnectionstatechange = () => {
+        if (!this.pc) return
+        const iceState = this.pc.iceConnectionState
+        console.log(`[WebRTC] ICE Connection state: ${iceState}`)
+        if (this.config.onIceStateChange) {
+          this.config.onIceStateChange(iceState)
+        }
+        if (iceState === 'connected' || iceState === 'completed') {
           if (this.config.onPeerActive) {
             this.config.onPeerActive()
           }

@@ -146,7 +146,7 @@ export const DiscoveryCard: React.FC<DiscoveryCardProps> = ({ user, onClose, onC
               <button
                 onClick={() => {
                   onClose()
-                  navigate('/duo')
+                  navigate('/duo', { state: { partner: user } })
                 }}
                 className="w-full py-3.5 flex items-center justify-center gap-2 font-display font-black text-sm text-[#F5E8D0] transition-all active:scale-98 cursor-pointer"
                 style={{

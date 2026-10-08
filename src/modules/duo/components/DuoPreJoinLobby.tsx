@@ -99,8 +99,11 @@ export const DuoPreJoinLobby: React.FC<DuoPreJoinLobbyProps> = ({
     } catch (err: any) {
       console.warn('Media permission denied or unavailable:', err)
       setHasPermission(false)
+      const isInsecure = !window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
       setPermissionError(
-        err.name === 'NotAllowedError'
+        isInsecure
+          ? 'Mobile browsers require HTTPS to access camera/mic. Please open the app using https:// or test via your Vercel URL!'
+          : err.name === 'NotAllowedError'
           ? 'Camera/microphone access was denied. Please allow permissions in your browser bar.'
           : 'Could not access camera or microphone. Please make sure no other app is using your webcam.'
       )
