@@ -16,9 +16,11 @@ export const DuoPage: React.FC = () => {
   const { profile } = useAuthStore()
 
   const {
+    sessionId,
     isActive,
     partner,
     startSessionLocally,
+    endSession,
     endSessionDB,
   } = useSessionStore()
 
@@ -27,6 +29,7 @@ export const DuoPage: React.FC = () => {
   const [selectedDuration, setSelectedDuration] = useState<SessionDuration>(30)
   const [inviteStatus, setInviteStatus] = useState<'idle' | 'waiting' | 'declined'>('idle')
   const [createdSessionId, setCreatedSessionId] = useState<string | null>(null)
+  const [partnerLeftNotice, setPartnerLeftNotice] = useState<string | null>(null)
 
   // Real-time listener for peer accept / decline and session updates
   useEffect(() => {
@@ -60,7 +63,47 @@ export const DuoPage: React.FC = () => {
     }
   }, [selectedPartner, profile?.id, selectedDuration, createdSessionId, startSessionLocally])
 
-  // Listen directly to the created session row in Postgres
+  // Active session watcher: Listen for partner cancellations / status updates
+  useEffect(() => {
+    if (!sessionId) return
+
+    // 1. Direct Realtime broadcast for zero-latency cancellation
+    const syncChannel = supabase
+      .channel(`session_sync_${sessionId}`)
+      .on('broadcast', { event: 'session_cancelled' }, () => {
+        endSession()
+        setPartnerLeftNotice('Your study partner cancelled or exited the session.')
+      })
+      .subscribe()
+
+    // 2. Postgres DB subscription as single source of truth
+    const dbChannel = supabase
+      .channel(`session_db_${sessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'sessions',
+          filter: `id=eq.${sessionId}`,
+        },
+        (payload) => {
+          const updated = payload.new as any
+          if (updated.status === 'cancelled' || updated.status === 'completed') {
+            endSession()
+            setPartnerLeftNotice('This session has been ended or cancelled.')
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(syncChannel)
+      supabase.removeChannel(dbChannel)
+    }
+  }, [sessionId, endSession])
+
+  // Listen directly to the created session row in Postgres (caller waiting for accept)
   useEffect(() => {
     if (!createdSessionId || !selectedPartner) return
 
@@ -152,8 +195,23 @@ export const DuoPage: React.FC = () => {
   } | null>(null)
 
   const handleEndCall = async () => {
+    if (sessionId) {
+      // 1. Direct Realtime broadcast so partner exits IMMEDIATELY
+      const syncChannel = supabase.channel(`session_sync_${sessionId}`)
+      syncChannel.send({
+        type: 'broadcast',
+        event: 'session_cancelled',
+        payload: { cancelledBy: currentUser.id },
+      }).catch(() => {})
+
+      // 2. Mark cancelled in database
+      await supabase.from('sessions').update({
+        status: 'cancelled',
+        ends_at: new Date().toISOString(),
+      }).eq('id', sessionId)
+    }
     await endSessionDB()
-    navigate('/history')
+    navigate('/discover')
   }
 
   // If in active session, render Lobby first, then Duo video room
@@ -187,6 +245,32 @@ export const DuoPage: React.FC = () => {
 
   return (
     <div className="relative w-full min-h-[100dvh] bg-[#FAF2E6] flex flex-col justify-between p-4 max-w-md mx-auto select-none text-[#2D1B11] pb-24">
+      {/* Partner Left / Session Ended Notice Modal */}
+      {partnerLeftNotice && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#FAF2E6] border border-[#DFC3A6] rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl">
+            <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto mb-3">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <h3 className="font-display font-black text-lg text-[#2D1B11] mb-2">
+              Session Ended
+            </h3>
+            <p className="text-xs text-[#7A5A46] font-medium mb-5">
+              {partnerLeftNotice}
+            </p>
+            <button
+              onClick={() => {
+                setPartnerLeftNotice(null)
+                navigate('/discover')
+              }}
+              className="w-full py-3 bg-[#7E4228] hover:bg-[#924D30] text-white text-xs font-black rounded-2xl shadow-md transition-all active:scale-95 cursor-pointer"
+            >
+              Return to Study World
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Header */}
       <div>
         <div className="flex items-center gap-3 pt-2 mb-6">

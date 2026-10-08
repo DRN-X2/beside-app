@@ -42,18 +42,25 @@ export const DuoPreJoinLobby: React.FC<DuoPreJoinLobbyProps> = ({
 
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 640 }, height: { ideal: 480 } },
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
           audio: true,
         })
       } catch (videoErr: any) {
-        console.warn('Video acquisition error, attempting audio-only fallback:', videoErr)
-        // If webcam is locked by another tab or unavailable, at least acquire microphone!
+        console.warn('Initial camera error, trying basic constraints:', videoErr)
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-          setIsCameraOff(true) // Automatically set camera off
-          setPermissionError('Camera is busy or in use by another tab. Audio is enabled!')
-        } catch (audioErr) {
-          throw videoErr
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          })
+        } catch (vErr2) {
+          console.warn('Video acquisition error, attempting audio-only fallback:', vErr2)
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            setIsCameraOff(true)
+            setPermissionError('Camera is busy or unavailable. Audio is enabled!')
+          } catch (audioErr) {
+            throw videoErr
+          }
         }
       }
 
@@ -99,6 +106,14 @@ export const DuoPreJoinLobby: React.FC<DuoPreJoinLobbyProps> = ({
       )
     }
   }
+
+  // Ensure video element always binds local stream when mounted or permissions change
+  useEffect(() => {
+    if (videoRef.current && streamRef.current && streamRef.current.getVideoTracks().length > 0) {
+      videoRef.current.srcObject = streamRef.current
+      videoRef.current.play().catch(() => {})
+    }
+  }, [hasPermission, isCameraOff])
 
   useEffect(() => {
     requestMedia()
@@ -168,23 +183,23 @@ export const DuoPreJoinLobby: React.FC<DuoPreJoinLobbyProps> = ({
       <div className="flex-1 flex flex-col gap-4 min-h-0 justify-center">
         {/* Mirror Camera Card (Google Meet Pre-Call Box) */}
         <div className="relative w-full aspect-[4/3] bg-white border border-[#E8DACB] rounded-3xl overflow-hidden shadow-lg flex items-center justify-center">
-          {!isCameraOff && hasPermission ? (
-            /* Live Camera Feed */
-            <div className="relative w-full h-full bg-[#180D08]">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover scale-x-[-1]"
-              />
-              <div className="absolute top-3 left-3 bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold text-white flex items-center gap-1.5 border border-white/10">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Camera Ready</span>
-              </div>
+          {/* Always mounted video element so srcObject binds synchronously */}
+          <div className={`relative w-full h-full bg-[#180D08] ${!isCameraOff && hasPermission ? 'block' : 'hidden'}`}>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover scale-x-[-1]"
+            />
+            <div className="absolute top-3 left-3 bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold text-white flex items-center gap-1.5 border border-white/10">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Camera Ready</span>
             </div>
-          ) : (
-            /* Camera Off: Friendly Centered Otter Avatar */
+          </div>
+
+          {/* Camera Off or Loading State */}
+          {(!hasPermission || isCameraOff) && hasPermission !== false && (
             <div className="w-full h-full bg-[#F5EDE3] flex flex-col items-center justify-center p-4">
               <div className="w-24 h-24 rounded-full bg-white p-2 shadow-md border border-[#E8DACB] flex items-center justify-center mb-2">
                 <OtterAvatar config={currentUser.otter || currentUser.otter_config} size="md" />
@@ -193,7 +208,7 @@ export const DuoPreJoinLobby: React.FC<DuoPreJoinLobbyProps> = ({
                 {currentUser.display_name} (You)
               </span>
               <span className="text-[10px] font-bold text-[#875F49] mt-0.5">
-                {isCameraOff ? 'Camera is turned off' : 'Connecting camera…'}
+                {isCameraOff ? 'Camera is turned off' : 'Starting camera…'}
               </span>
             </div>
           )}
